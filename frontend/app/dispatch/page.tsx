@@ -1,92 +1,178 @@
 'use client';
 
-import React, {useState} from 'react';
+import React, {useState, useReducer} from 'react';
 import Navigation from '@/components/Navigation';
 import MapComponent from '@/components/MapComponent';
-import DispatchSummary from '@/components/DispatchSummary';
+import DispatchConfirmModal from '@/components/DispatchConfirmModal';
+import Toast from '@/components/Toast';
 import {Order, Truck, Coordinate, DispatchResult} from '@/lib/types';
 import {dispatchAPI} from '@/lib/api';
 import Link from 'next/link';
 
 type DispatchStep = 'warehouse' | 'deliveries' | 'trucks' | 'calculate' | 'review';
 
+interface DispatchState {
+  currentStep: DispatchStep;
+  warehouse: Coordinate | null;
+  deliveries: Array<{id: string; lat: number; lng: number; weight: number}>;
+  trucks: Array<{id: string; maxWeight: number; maxDistance: number}>;
+  dispatchResult: DispatchResult | null;
+  loading: boolean;
+  error: string | null;
+  tempDeliveryWeight: string;
+  tempDeliveryCoord: Coordinate | null;
+  truckForm: {id: string; maxWeight: string; maxDistance: string};
+  toast: {message: string; type: 'success' | 'error' | 'info'} | null;
+  showConfirmModal: boolean;
+}
+
+type DispatchAction =
+  | {type: 'SET_STEP'; payload: DispatchStep}
+  | {type: 'SET_WAREHOUSE'; payload: Coordinate}
+  | {type: 'ADD_DELIVERY'; payload: {id: string; lat: number; lng: number; weight: number}}
+  | {type: 'REMOVE_DELIVERY'; payload: number}
+  | {type: 'SET_TEMP_DELIVERY_WEIGHT'; payload: string}
+  | {type: 'SET_TEMP_DELIVERY_COORD'; payload: Coordinate | null}
+  | {type: 'UPDATE_TRUCK_FORM'; payload: Partial<{id: string; maxWeight: string; maxDistance: string}>}
+  | {type: 'ADD_TRUCK'; payload: {id: string; maxWeight: number; maxDistance: number}}
+  | {type: 'REMOVE_TRUCK'; payload: number}
+  | {type: 'SET_LOADING'; payload: boolean}
+  | {type: 'SET_ERROR'; payload: string | null}
+  | {type: 'SET_DISPATCH_RESULT'; payload: DispatchResult}
+  | {type: 'SHOW_TOAST'; payload: {message: string; type: 'success' | 'error' | 'info'}}
+  | {type: 'HIDE_TOAST'}
+  | {type: 'SHOW_CONFIRM_MODAL'}
+  | {type: 'HIDE_CONFIRM_MODAL'}
+  | {type: 'RESET_FORM'};
+
+const initialState: DispatchState = {
+  currentStep: 'warehouse',
+  warehouse: null,
+  deliveries: [],
+  trucks: [],
+  dispatchResult: null,
+  loading: false,
+  error: null,
+  tempDeliveryWeight: '',
+  tempDeliveryCoord: null,
+  truckForm: {id: '', maxWeight: '', maxDistance: ''},
+  toast: null,
+  showConfirmModal: false,
+};
+
+function dispatchReducer(state: DispatchState, action: DispatchAction): DispatchState {
+  switch (action.type) {
+    case 'SET_STEP':
+      return {...state, currentStep: action.payload};
+    case 'SET_WAREHOUSE':
+      return {...state, warehouse: action.payload};
+    case 'ADD_DELIVERY':
+      return {
+        ...state,
+        deliveries: [...state.deliveries, action.payload],
+        tempDeliveryWeight: '',
+        tempDeliveryCoord: null,
+      };
+    case 'REMOVE_DELIVERY':
+      return {...state, deliveries: state.deliveries.filter((_, i) => i !== action.payload)};
+    case 'SET_TEMP_DELIVERY_WEIGHT':
+      return {...state, tempDeliveryWeight: action.payload};
+    case 'SET_TEMP_DELIVERY_COORD':
+      return {...state, tempDeliveryCoord: action.payload};
+    case 'UPDATE_TRUCK_FORM':
+      return {...state, truckForm: {...state.truckForm, ...action.payload}};
+    case 'ADD_TRUCK':
+      return {
+        ...state,
+        trucks: [...state.trucks, action.payload],
+        truckForm: {id: '', maxWeight: '', maxDistance: ''},
+      };
+    case 'REMOVE_TRUCK':
+      return {...state, trucks: state.trucks.filter((_, i) => i !== action.payload)};
+    case 'SET_LOADING':
+      return {...state, loading: action.payload};
+    case 'SET_ERROR':
+      return {...state, error: action.payload};
+    case 'SET_DISPATCH_RESULT':
+      return {...state, dispatchResult: action.payload};
+    case 'SHOW_TOAST':
+      return {...state, toast: action.payload};
+    case 'HIDE_TOAST':
+      return {...state, toast: null};
+    case 'SHOW_CONFIRM_MODAL':
+      return {...state, showConfirmModal: true};
+    case 'HIDE_CONFIRM_MODAL':
+      return {...state, showConfirmModal: false};
+    case 'RESET_FORM':
+      return initialState;
+    default:
+      return state;
+  }
+}
+
 export default function DispatchPage() {
-  const [currentStep, setCurrentStep] = useState<DispatchStep>('warehouse');
-  const [warehouse, setWarehouse] = useState<Coordinate | null>(null);
-  const [deliveries, setDeliveries] = useState<Array<{id: string; lat: number; lng: number; weight: number}>>([]);
-  const [trucks, setTrucks] = useState<Array<{id: string; maxWeight: number; maxDistance: number}>>([]);
-  const [dispatchResult, setDispatchResult] = useState<DispatchResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const [tempDeliveryWeight, setTempDeliveryWeight] = useState('');
-  const [tempDeliveryCoord, setTempDeliveryCoord] = useState<Coordinate | null>(null);
-
-  const [truckForm, setTruckForm] = useState({id: '', maxWeight: '', maxDistance: ''});
+  const [state, dispatch] = useReducer(dispatchReducer, initialState);
 
   const handleWarehouseSet = (coord: Coordinate) => {
-    setWarehouse(coord);
+    dispatch({type: 'SET_WAREHOUSE', payload: coord});
   };
 
   const handleDeliveryMapClick = (coord: Coordinate) => {
-    setTempDeliveryCoord(coord);
+    dispatch({type: 'SET_TEMP_DELIVERY_COORD', payload: coord});
   };
 
   const addDelivery = () => {
-    if (!tempDeliveryCoord || !tempDeliveryWeight) {
-      setError('Please enter weight and click on map for location');
+    if (!state.tempDeliveryCoord || !state.tempDeliveryWeight) {
+      dispatch({type: 'SET_ERROR', payload: 'Please enter weight and click on map for location'});
       return;
     }
 
     const newDelivery = {
-      id: `ORDER-${deliveries.length + 1}`,
-      lat: tempDeliveryCoord.lat,
-      lng: tempDeliveryCoord.lng,
-      weight: parseFloat(tempDeliveryWeight),
+      id: `ORDER-${state.deliveries.length + 1}`,
+      lat: state.tempDeliveryCoord.lat,
+      lng: state.tempDeliveryCoord.lng,
+      weight: parseFloat(state.tempDeliveryWeight),
     };
 
-    setDeliveries([...deliveries, newDelivery]);
-    setTempDeliveryWeight('');
-    setTempDeliveryCoord(null);
-    setError(null);
+    dispatch({type: 'ADD_DELIVERY', payload: newDelivery});
+    dispatch({type: 'SET_ERROR', payload: null});
   };
 
   const removeDelivery = (index: number) => {
-    setDeliveries(deliveries.filter((_, i) => i !== index));
+    dispatch({type: 'REMOVE_DELIVERY', payload: index});
   };
 
   const addTruck = () => {
-    if (!truckForm.id || !truckForm.maxWeight || !truckForm.maxDistance) {
-      setError('Please fill all truck fields');
+    if (!state.truckForm.id || !state.truckForm.maxWeight || !state.truckForm.maxDistance) {
+      dispatch({type: 'SET_ERROR', payload: 'Please fill all truck fields'});
       return;
     }
 
     const newTruck = {
-      id: truckForm.id,
-      maxWeight: parseFloat(truckForm.maxWeight),
-      maxDistance: parseFloat(truckForm.maxDistance),
+      id: state.truckForm.id,
+      maxWeight: parseFloat(state.truckForm.maxWeight),
+      maxDistance: parseFloat(state.truckForm.maxDistance),
     };
 
-    setTrucks([...trucks, newTruck]);
-    setTruckForm({id: '', maxWeight: '', maxDistance: ''});
-    setError(null);
+    dispatch({type: 'ADD_TRUCK', payload: newTruck});
+    dispatch({type: 'SET_ERROR', payload: null});
   };
 
   const removeTruck = (index: number) => {
-    setTrucks(trucks.filter((_, i) => i !== index));
+    dispatch({type: 'REMOVE_TRUCK', payload: index});
   };
 
   const handleCalculateDispatch = async () => {
-    if (!warehouse || deliveries.length === 0 || trucks.length === 0) {
-      setError('Please complete all previous steps');
+    if (!state.warehouse || state.deliveries.length === 0 || state.trucks.length === 0) {
+      dispatch({type: 'SET_ERROR', payload: 'Please complete all previous steps'});
       return;
     }
 
-    setLoading(true);
-    setError(null);
+    dispatch({type: 'SET_LOADING', payload: true});
+    dispatch({type: 'SET_ERROR', payload: null});
 
     try {
-      const orders: Order[] = deliveries.map((d) => ({
+      const orders: Order[] = state.deliveries.map((d) => ({
         id: d.id,
         lat: d.lat,
         lng: d.lng,
@@ -95,7 +181,7 @@ export default function DispatchPage() {
         is_assigned: false,
       }));
 
-      const truckData: Truck[] = trucks.map((t) => ({
+      const truckData: Truck[] = state.trucks.map((t) => ({
         id: t.id,
         max_weight_capacity: t.maxWeight,
         max_daily_distance: t.maxDistance,
@@ -105,31 +191,33 @@ export default function DispatchPage() {
       const response = await dispatchAPI.calculate({
         orders,
         trucks: truckData,
-        warehouse_lat: warehouse.lat,
-        warehouse_lng: warehouse.lng,
+        warehouse_lat: state.warehouse.lat,
+        warehouse_lng: state.warehouse.lng,
       });
 
-      setDispatchResult(response.data);
-      setCurrentStep('review');
+      dispatch({type: 'SET_DISPATCH_RESULT', payload: response.data});
+      dispatch({type: 'SHOW_CONFIRM_MODAL'});
+      dispatch({type: 'SHOW_TOAST', payload: {message: 'Dispatch plan calculated successfully!', type: 'success'}});
     } catch (err) {
-      setError('Failed to calculate dispatch plan. Please try again.');
+      dispatch({type: 'SET_ERROR', payload: 'Failed to calculate dispatch plan. Please try again.'});
+      dispatch({type: 'SHOW_TOAST', payload: {message: 'Error calculating dispatch plan', type: 'error'}});
       console.error(err);
     } finally {
-      setLoading(false);
+      dispatch({type: 'SET_LOADING', payload: false});
     }
   };
 
   const handleSaveDispatch = async () => {
-    if (!warehouse || deliveries.length === 0 || trucks.length === 0) {
-      setError('Invalid dispatch data');
+    if (!state.warehouse || state.deliveries.length === 0 || state.trucks.length === 0) {
+      dispatch({type: 'SET_ERROR', payload: 'Invalid dispatch data'});
       return;
     }
 
-    setLoading(true);
-    setError(null);
+    dispatch({type: 'SET_LOADING', payload: true});
+    dispatch({type: 'SET_ERROR', payload: null});
 
     try {
-      const orders: Order[] = deliveries.map((d) => ({
+      const orders: Order[] = state.deliveries.map((d) => ({
         id: d.id,
         lat: d.lat,
         lng: d.lng,
@@ -138,7 +226,7 @@ export default function DispatchPage() {
         is_assigned: false,
       }));
 
-      const truckData: Truck[] = trucks.map((t) => ({
+      const truckData: Truck[] = state.trucks.map((t) => ({
         id: t.id,
         max_weight_capacity: t.maxWeight,
         max_daily_distance: t.maxDistance,
@@ -148,16 +236,20 @@ export default function DispatchPage() {
       await dispatchAPI.save({
         orders,
         trucks: truckData,
-        warehouse_lat: warehouse.lat,
-        warehouse_lng: warehouse.lng,
+        warehouse_lat: state.warehouse.lat,
+        warehouse_lng: state.warehouse.lng,
       });
 
-      window.location.href = '/active-deliveries';
+      dispatch({type: 'SHOW_TOAST', payload: {message: 'Dispatch activated successfully!', type: 'success'}});
+      setTimeout(() => {
+        window.location.href = '/active-deliveries';
+      }, 1500);
     } catch (err) {
-      setError('Failed to save dispatch. Please try again.');
+      dispatch({type: 'SET_ERROR', payload: 'Failed to save dispatch. Please try again.'});
+      dispatch({type: 'SHOW_TOAST', payload: {message: 'Error saving dispatch', type: 'error'}});
       console.error(err);
     } finally {
-      setLoading(false);
+      dispatch({type: 'SET_LOADING', payload: false});
     }
   };
 
@@ -166,14 +258,13 @@ export default function DispatchPage() {
     {number: 2, label: 'Deliveries', id: 'deliveries' as DispatchStep},
     {number: 3, label: 'Trucks', id: 'trucks' as DispatchStep},
     {number: 4, label: 'Calculate', id: 'calculate' as DispatchStep},
-    {number: 5, label: 'Review', id: 'review' as DispatchStep},
   ];
 
   const isStepComplete = (step: DispatchStep) => {
-    if (step === 'warehouse') return warehouse !== null;
-    if (step === 'deliveries') return deliveries.length > 0;
-    if (step === 'trucks') return trucks.length > 0;
-    if (step === 'calculate') return dispatchResult !== null;
+    if (step === 'warehouse') return state.warehouse !== null;
+    if (step === 'deliveries') return state.deliveries.length > 0;
+    if (step === 'trucks') return state.trucks.length > 0;
+    if (step === 'calculate') return state.dispatchResult !== null;
     return false;
   };
 
@@ -195,18 +286,18 @@ export default function DispatchPage() {
               {stepIndicator.map((step) => (
                 <div key={step.id} className="flex flex-col items-center flex-1">
                   <button
-                    onClick={() => isStepComplete(step.id) && setCurrentStep(step.id)}
+                    onClick={() => isStepComplete(step.id) && dispatch({type: 'SET_STEP', payload: step.id})}
                     className={`w-12 h-12 rounded-full font-bold text-lg transition mb-2 ${
-                      currentStep === step.id
+                      state.currentStep === step.id
                         ? 'bg-blue-600 text-white'
                         : isStepComplete(step.id)
                         ? 'bg-green-600 text-white hover:bg-green-700 cursor-pointer'
                         : 'bg-gray-300 text-gray-600'
                     }`}
                   >
-                    {currentStep === step.id ? step.number : isStepComplete(step.id) ? '✓' : step.number}
+                    {state.currentStep === step.id ? step.number : isStepComplete(step.id) ? '✓' : step.number}
                   </button>
-                  <span className={`text-sm font-semibold text-center ${currentStep === step.id ? 'text-blue-600' : 'text-gray-600'}`}>
+                  <span className={`text-sm font-semibold text-center ${state.currentStep === step.id ? 'text-blue-600' : 'text-gray-600'}`}>
                     {step.label}
                   </span>
                 </div>
@@ -214,38 +305,48 @@ export default function DispatchPage() {
             </div>
           </div>
 
-          {error && (
+          {state.error && (
             <div className="mb-6 bg-red-50 border border-red-200 text-red-800 p-4 rounded-lg">
-              ⚠️ {error}
+              ⚠️ {state.error}
             </div>
           )}
 
+          {state.toast && (
+            <Toast
+              message={state.toast.message}
+              type={state.toast.type}
+              onClose={() => dispatch({type: 'HIDE_TOAST'})}
+            />
+          )}
+
           <div className="bg-white rounded-lg shadow-md p-8">
-            {currentStep === 'warehouse' && (
-              <div>
+            {state.currentStep === 'warehouse' && (
+              <div className="flex flex-col h-[600px]">
                 <h2 className="text-2xl font-bold text-gray-800 mb-4">Step 1: Set Warehouse Location</h2>
                 <p className="text-gray-600 mb-6">Click on the map to mark your warehouse location</p>
 
-                <MapComponent onWarehouseSet={handleWarehouseSet} warehousePin={warehouse} editable={!warehouse} />
+                <div className="flex-1 mb-6">
+                  <MapComponent onWarehouseSet={handleWarehouseSet} warehousePin={state.warehouse} editable={!state.warehouse} mode="warehouse" />
+                </div>
 
-                {warehouse && (
-                  <div className="mt-6 bg-green-50 border border-green-200 rounded-lg p-4">
+                {state.warehouse && (
+                  <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4">
                     <p className="text-green-800 font-semibold">✓ Warehouse Location Set</p>
                     <p className="text-sm text-green-700 mt-1">
-                      Lat: {warehouse.lat.toFixed(4)}, Lng: {warehouse.lng.toFixed(4)}
+                      Lat: {state.warehouse.lat.toFixed(4)}, Lng: {state.warehouse.lng.toFixed(4)}
                     </p>
                   </div>
                 )}
 
-                <div className="flex gap-4 mt-8">
+                <div className="flex gap-4">
                   <Link href="/" className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded transition">
                     Cancel
                   </Link>
                   <button
-                    onClick={() => setCurrentStep('deliveries')}
-                    disabled={!warehouse}
+                    onClick={() => dispatch({type: 'SET_STEP', payload: 'deliveries'})}
+                    disabled={!state.warehouse}
                     className={`font-bold py-3 px-8 rounded transition ml-auto ${
-                      warehouse
+                      state.warehouse
                         ? 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
                         : 'bg-gray-300 text-gray-600 cursor-not-allowed'
                     }`}
@@ -256,25 +357,29 @@ export default function DispatchPage() {
               </div>
             )}
 
-            {currentStep === 'deliveries' && (
-              <div>
+            {state.currentStep === 'deliveries' && (
+              <div className="flex flex-col h-[800px]">
                 <h2 className="text-2xl font-bold text-gray-800 mb-4">Step 2: Register Deliveries</h2>
                 <p className="text-gray-600 mb-6">Click on the map to add delivery locations, then enter the weight</p>
 
-                <MapComponent
-                  warehousePin={warehouse}
-                  deliveryPins={deliveries.map((d) => ({id: d.id, lat: d.lat, lng: d.lng, type: 'delivery' as const, weight: d.weight}))}
-                  onDeliveryAdded={() => {}}
-                  editable={true}
-                />
+                <div className="flex-1 grid md:grid-cols-3 gap-6 mb-6">
+                  <div className="md:col-span-2">
+                    <MapComponent
+                      warehousePin={state.warehouse}
+                      deliveryPins={state.deliveries.map((d) => ({id: d.id, lat: d.lat, lng: d.lng, type: 'delivery' as const, weight: d.weight}))}
+                      onDeliveryAdded={handleDeliveryMapClick}
+                      editable={true}
+                      mode="delivery"
+                      tempPin={state.tempDeliveryCoord}
+                    />
+                  </div>
 
-                <div className="grid md:grid-cols-2 gap-6 mt-6">
-                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 flex flex-col">
                     <h3 className="font-bold text-gray-800 mb-4">Add New Delivery</h3>
-                    {tempDeliveryCoord && (
+                    {state.tempDeliveryCoord && (
                       <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded">
                         <p className="text-sm text-gray-700">
-                          <strong>Location:</strong> Lat: {tempDeliveryCoord.lat.toFixed(4)}, Lng: {tempDeliveryCoord.lng.toFixed(4)}
+                          <strong>Location:</strong> Lat: {state.tempDeliveryCoord.lat.toFixed(4)}, Lng: {state.tempDeliveryCoord.lng.toFixed(4)}
                         </p>
                       </div>
                     )}
@@ -284,61 +389,60 @@ export default function DispatchPage() {
                     <input
                       type="number"
                       placeholder="Enter weight"
-                      value={tempDeliveryWeight}
-                      onChange={(e) => setTempDeliveryWeight(e.target.value)}
+                      value={state.tempDeliveryWeight}
+                      onChange={(e) => dispatch({type: 'SET_TEMP_DELIVERY_WEIGHT', payload: e.target.value})}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     <p className="text-xs text-gray-600 mb-3">
-                      {tempDeliveryCoord ? '✓ Location selected. Enter weight above.' : 'Click on the map to select delivery location first.'}
+                      {state.tempDeliveryCoord ? '✓ Location selected. Enter weight above.' : 'Click on the map to select delivery location first.'}
                     </p>
                     <button
                       onClick={addDelivery}
-                      disabled={!tempDeliveryCoord || !tempDeliveryWeight}
+                      disabled={!state.tempDeliveryCoord || !state.tempDeliveryWeight}
                       className={`w-full font-bold py-2 px-4 rounded transition ${
-                        tempDeliveryCoord && tempDeliveryWeight
+                        state.tempDeliveryCoord && state.tempDeliveryWeight
                           ? 'bg-green-600 hover:bg-green-700 text-white cursor-pointer'
                           : 'bg-gray-300 text-gray-600 cursor-not-allowed'
                       }`}
                     >
                       Add Delivery
                     </button>
-                  </div>
-
-                  <div>
-                    <h3 className="font-bold text-gray-800 mb-4">Deliveries Added ({deliveries.length})</h3>
-                    <div className="space-y-2 max-h-64 overflow-y-auto">
-                      {deliveries.map((delivery, index) => (
-                        <div key={index} className="bg-blue-50 border border-blue-200 rounded p-3 flex justify-between items-start">
-                          <div>
-                            <p className="font-semibold text-gray-800">{delivery.id}</p>
-                            <p className="text-xs text-gray-600">
-                              Weight: {delivery.weight}kg | Lat: {delivery.lat.toFixed(4)}, Lng: {delivery.lng.toFixed(4)}
-                            </p>
+                    <div className="mt-4 flex-1 overflow-y-auto">
+                      <p className="font-bold text-gray-800 mb-3">Deliveries ({state.deliveries.length})</p>
+                      <div className="space-y-2">
+                        {state.deliveries.map((delivery, index) => (
+                          <div key={index} className="bg-blue-50 border border-blue-200 rounded p-2 flex justify-between items-start text-xs">
+                            <div className="flex-1">
+                              <p className="font-semibold text-gray-800">{delivery.id}</p>
+                              <p className="text-gray-600">
+                                {delivery.weight}kg
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => removeDelivery(index)}
+                              className="text-red-600 hover:text-red-800 font-bold ml-2"
+                            >
+                              ✕
+                            </button>
                           </div>
-                          <button
-                            onClick={() => removeDelivery(index)}
-                            className="text-red-600 hover:text-red-800 font-bold"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex gap-4 mt-8">
+                <div className="flex gap-4">
                   <button
-                    onClick={() => setCurrentStep('warehouse')}
+                    onClick={() => dispatch({type: 'SET_STEP', payload: 'warehouse'})}
                     className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded transition"
                   >
                     ← Back
                   </button>
                   <button
-                    onClick={() => setCurrentStep('trucks')}
-                    disabled={deliveries.length === 0}
+                    onClick={() => dispatch({type: 'SET_STEP', payload: 'trucks'})}
+                    disabled={state.deliveries.length === 0}
                     className={`font-bold py-3 px-8 rounded transition ml-auto ${
-                      deliveries.length > 0
+                      state.deliveries.length > 0
                         ? 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
                         : 'bg-gray-300 text-gray-600 cursor-not-allowed'
                     }`}
@@ -349,7 +453,7 @@ export default function DispatchPage() {
               </div>
             )}
 
-            {currentStep === 'trucks' && (
+            {state.currentStep === 'trucks' && (
               <div>
                 <h2 className="text-2xl font-bold text-gray-800 mb-4">Step 3: Register Trucks</h2>
                 <p className="text-gray-600 mb-6">Add your available trucks with their capacity constraints</p>
@@ -361,8 +465,8 @@ export default function DispatchPage() {
                     <input
                       type="text"
                       placeholder="e.g., TRUCK-001"
-                      value={truckForm.id}
-                      onChange={(e) => setTruckForm({...truckForm, id: e.target.value})}
+                      value={state.truckForm.id}
+                      onChange={(e) => dispatch({type: 'UPDATE_TRUCK_FORM', payload: {id: e.target.value}})}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
 
@@ -370,8 +474,8 @@ export default function DispatchPage() {
                     <input
                       type="number"
                       placeholder="e.g., 1000"
-                      value={truckForm.maxWeight}
-                      onChange={(e) => setTruckForm({...truckForm, maxWeight: e.target.value})}
+                      value={state.truckForm.maxWeight}
+                      onChange={(e) => dispatch({type: 'UPDATE_TRUCK_FORM', payload: {maxWeight: e.target.value}})}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
 
@@ -379,16 +483,16 @@ export default function DispatchPage() {
                     <input
                       type="number"
                       placeholder="e.g., 500"
-                      value={truckForm.maxDistance}
-                      onChange={(e) => setTruckForm({...truckForm, maxDistance: e.target.value})}
+                      value={state.truckForm.maxDistance}
+                      onChange={(e) => dispatch({type: 'UPDATE_TRUCK_FORM', payload: {maxDistance: e.target.value}})}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
 
                     <button
                       onClick={addTruck}
-                      disabled={!truckForm.id || !truckForm.maxWeight || !truckForm.maxDistance}
+                      disabled={!state.truckForm.id || !state.truckForm.maxWeight || !state.truckForm.maxDistance}
                       className={`w-full font-bold py-2 px-4 rounded transition ${
-                        truckForm.id && truckForm.maxWeight && truckForm.maxDistance
+                        state.truckForm.id && state.truckForm.maxWeight && state.truckForm.maxDistance
                           ? 'bg-green-600 hover:bg-green-700 text-white cursor-pointer'
                           : 'bg-gray-300 text-gray-600 cursor-not-allowed'
                       }`}
@@ -398,9 +502,9 @@ export default function DispatchPage() {
                   </div>
 
                   <div>
-                    <h3 className="font-bold text-gray-800 mb-4">Trucks Added ({trucks.length})</h3>
+                    <h3 className="font-bold text-gray-800 mb-4">Trucks Added ({state.trucks.length})</h3>
                     <div className="space-y-2 max-h-64 overflow-y-auto">
-                      {trucks.map((truck, index) => (
+                      {state.trucks.map((truck, index) => (
                         <div key={index} className="bg-purple-50 border border-purple-200 rounded p-3 flex justify-between items-start">
                           <div>
                             <p className="font-semibold text-gray-800">{truck.id}</p>
@@ -422,16 +526,16 @@ export default function DispatchPage() {
 
                 <div className="flex gap-4 mt-8">
                   <button
-                    onClick={() => setCurrentStep('deliveries')}
+                    onClick={() => dispatch({type: 'SET_STEP', payload: 'deliveries'})}
                     className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded transition"
                   >
                     ← Back
                   </button>
                   <button
-                    onClick={() => setCurrentStep('calculate')}
-                    disabled={trucks.length === 0}
+                    onClick={() => dispatch({type: 'SET_STEP', payload: 'calculate'})}
+                    disabled={state.trucks.length === 0}
                     className={`font-bold py-3 px-8 rounded transition ml-auto ${
-                      trucks.length > 0
+                      state.trucks.length > 0
                         ? 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
                         : 'bg-gray-300 text-gray-600 cursor-not-allowed'
                     }`}
@@ -442,7 +546,7 @@ export default function DispatchPage() {
               </div>
             )}
 
-            {currentStep === 'calculate' && (
+            {state.currentStep === 'calculate' && (
               <div>
                 <h2 className="text-2xl font-bold text-gray-800 mb-4">Step 4: Calculate Dispatch Plan</h2>
                 <p className="text-gray-600 mb-6">Click the button below to calculate the optimal delivery plan</p>
@@ -452,37 +556,37 @@ export default function DispatchPage() {
                   <div className="grid md:grid-cols-3 gap-4">
                     <div>
                       <p className="text-sm text-gray-600">Total Deliveries</p>
-                      <p className="text-2xl font-bold text-blue-600">{deliveries.length}</p>
+                      <p className="text-2xl font-bold text-blue-600">{state.deliveries.length}</p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Total Weight</p>
                       <p className="text-2xl font-bold text-blue-600">
-                        {deliveries.reduce((sum, d) => sum + d.weight, 0).toFixed(1)} kg
+                        {state.deliveries.reduce((sum, d) => sum + d.weight, 0).toFixed(1)} kg
                       </p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Available Trucks</p>
-                      <p className="text-2xl font-bold text-blue-600">{trucks.length}</p>
+                      <p className="text-2xl font-bold text-blue-600">{state.trucks.length}</p>
                     </div>
                   </div>
                 </div>
 
                 <button
                   onClick={handleCalculateDispatch}
-                  disabled={loading}
+                  disabled={state.loading}
                   className={`w-full font-bold py-4 px-6 rounded-lg transition text-lg ${
-                    loading
+                    state.loading
                       ? 'bg-gray-400 text-gray-600 cursor-not-allowed'
                       : 'bg-green-600 hover:bg-green-700 text-white cursor-pointer'
                   }`}
                 >
-                  {loading ? 'Calculating...' : '✓ Calculate Optimal Plan'}
+                  {state.loading ? 'Calculating...' : '✓ Calculate Optimal Plan'}
                 </button>
 
                 <div className="flex gap-4 mt-8">
                   <button
-                    onClick={() => setCurrentStep('trucks')}
-                    disabled={loading}
+                    onClick={() => dispatch({type: 'SET_STEP', payload: 'trucks'})}
+                    disabled={state.loading}
                     className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded transition disabled:bg-gray-400"
                   >
                     ← Back
@@ -491,34 +595,17 @@ export default function DispatchPage() {
               </div>
             )}
 
-            {currentStep === 'review' && dispatchResult && (
-              <div>
-                <h2 className="text-2xl font-bold text-gray-800 mb-4">Step 5: Review & Confirm</h2>
-                <p className="text-gray-600 mb-6">Review the calculated dispatch plan below</p>
-
-                <DispatchSummary result={dispatchResult} />
-
-                <div className="flex gap-4 mt-8">
-                  <button
-                    onClick={() => setCurrentStep('calculate')}
-                    disabled={loading}
-                    className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded transition disabled:bg-gray-400"
-                  >
-                    ← Recalculate
-                  </button>
-                  <button
-                    onClick={handleSaveDispatch}
-                    disabled={loading}
-                    className={`font-bold py-3 px-8 rounded transition ml-auto ${
-                      loading
-                        ? 'bg-gray-400 text-gray-600 cursor-not-allowed'
-                        : 'bg-green-600 hover:bg-green-700 text-white cursor-pointer'
-                    }`}
-                  >
-                    {loading ? 'Saving...' : '✓ Save & Activate Dispatch'}
-                  </button>
-                </div>
-              </div>
+            {state.showConfirmModal && state.dispatchResult && (
+              <DispatchConfirmModal
+                result={state.dispatchResult}
+                loading={state.loading}
+                onSave={handleSaveDispatch}
+                onRecalculate={() => {
+                  dispatch({type: 'HIDE_CONFIRM_MODAL'});
+                  dispatch({type: 'SET_STEP', payload: 'calculate'});
+                }}
+                onCancel={() => dispatch({type: 'HIDE_CONFIRM_MODAL'})}
+              />
             )}
           </div>
         </div>

@@ -22,9 +22,14 @@ html, body {
   min-height: 100vh;
 }
 
+.leaflet-map {
+  width: 100% !important;
+  height: 100% !important;
+}
+
 .leaflet-container {
-  height: 400px;
-  border-radius: 0.5rem;
+  background-color: #f5f5f5;
+  z-index: 1;
 }
 
 .marker-icon {
@@ -33,10 +38,4 @@ html, body {
 
 .marker-icon-warehouse {
   filter: hue-rotate(-30deg) brightness(1.2);
-}
-
-@media (max-width: 768px) {
-  .leaflet-container {
-    height: 300px;
-  }
 }

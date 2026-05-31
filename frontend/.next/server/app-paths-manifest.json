@@ -1,6 +1,0 @@
-{
-  "/page": "app/page.js",
-  "/completed-deliveries/page": "app/completed-deliveries/page.js",
-  "/dispatch/page": "app/dispatch/page.js",
-  "/active-deliveries/page": "app/active-deliveries/page.js"
-}

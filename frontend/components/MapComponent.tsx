@@ -1,7 +1,8 @@
 'use client';
 
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import {Coordinate} from '@/lib/types';
 
 interface MapPin {
@@ -14,10 +15,12 @@ interface MapPin {
 
 interface MapComponentProps {
   onWarehouseSet?: (coord: Coordinate) => void;
-  onDeliveryAdded?: (deliveries: MapPin[]) => void;
+  onDeliveryAdded?: (coord: Coordinate) => void;
   warehousePin?: Coordinate | null;
   deliveryPins?: MapPin[];
   editable?: boolean;
+  mode?: 'warehouse' | 'delivery';
+  tempPin?: Coordinate | null;
 }
 
 const MapComponent: React.FC<MapComponentProps> = ({
@@ -26,28 +29,45 @@ const MapComponent: React.FC<MapComponentProps> = ({
   warehousePin,
   deliveryPins = [],
   editable = true,
+  mode = 'warehouse',
+  tempPin = null,
 }) => {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const warehouseMarker = useRef<L.Marker | null>(null);
-  const deliveryMarkers = useRef<{[key: string]: L.Marker}>({});
+  const deliveryMarkers = useRef<Map<string, L.Marker>>(new Map());
+  const tempMarker = useRef<L.Marker | null>(null);
   const [mapReady, setMapReady] = useState(false);
+  const clickDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!mapContainer.current) return;
+    if (map.current) return;
 
-    map.current = L.map(mapContainer.current).setView([28.7041, 77.1025], 10);
+    map.current = L.map(mapContainer.current, {
+      preferCanvas: true,
+    }).setView([28.7041, 77.1025], 10);
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap contributors',
+      maxNativeZoom: 18,
       maxZoom: 19,
     }).addTo(map.current);
+
+    setTimeout(() => {
+      map.current?.invalidateSize();
+    }, 100);
 
     setMapReady(true);
 
     return () => {
-      map.current?.remove();
-      map.current = null;
+      if (map.current) {
+        map.current.remove();
+        map.current = null;
+      }
+      if (clickDebounceRef.current) {
+        clearTimeout(clickDebounceRef.current);
+      }
     };
   }, []);
 
@@ -84,7 +104,10 @@ const MapComponent: React.FC<MapComponentProps> = ({
   useEffect(() => {
     if (!map.current || !mapReady) return;
 
-    deliveryMarkers.current = {};
+    deliveryMarkers.current.forEach((marker) => {
+      map.current!.removeLayer(marker);
+    });
+    deliveryMarkers.current.clear();
 
     deliveryPins.forEach((pin) => {
       const marker = L.marker([pin.lat, pin.lng], {
@@ -106,19 +129,64 @@ const MapComponent: React.FC<MapComponentProps> = ({
         {closeButton: true}
       );
 
-      deliveryMarkers.current[pin.id] = marker;
+      deliveryMarkers.current.set(pin.id, marker);
     });
   }, [deliveryPins, mapReady]);
 
-  const handleMapClick = (e: L.LeafletMouseEvent) => {
-    if (!editable || !map.current) return;
+  useEffect(() => {
+    if (!map.current || !mapReady) return;
 
-    const {lat, lng} = e.latlng;
+    if (tempPin) {
+      if (tempMarker.current) {
+        tempMarker.current.setLatLng([tempPin.lat, tempPin.lng]);
+      } else {
+        tempMarker.current = L.marker([tempPin.lat, tempPin.lng], {
+          icon: L.icon({
+            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-yellow.png',
+            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+            iconSize: [25, 41],
+            iconAnchor: [12, 41],
+            popupAnchor: [1, -34],
+            shadowSize: [41, 41],
+          }),
+        }).addTo(map.current);
 
-    if (!warehousePin && onWarehouseSet) {
-      onWarehouseSet({lat, lng});
+        tempMarker.current.bindPopup(
+          `<div class="font-semibold">Pending Location</div>
+           <div class="text-sm">Lat: ${tempPin.lat.toFixed(4)}</div>
+           <div class="text-sm">Lng: ${tempPin.lng.toFixed(4)}</div>`,
+          {closeButton: true}
+        );
+      }
+    } else {
+      if (tempMarker.current && map.current.hasLayer(tempMarker.current)) {
+        map.current.removeLayer(tempMarker.current);
+      }
+      tempMarker.current = null;
     }
-  };
+  }, [tempPin, mapReady]);
+
+  const handleMapClick = useCallback(
+    (e: L.LeafletMouseEvent) => {
+      if (!editable || !map.current) return;
+
+      if (clickDebounceRef.current) {
+        clearTimeout(clickDebounceRef.current);
+      }
+
+      clickDebounceRef.current = setTimeout(() => {
+        const {lat, lng} = e.latlng;
+        const coord = {lat, lng};
+
+        if (mode === 'warehouse' && onWarehouseSet) {
+          onWarehouseSet(coord);
+        } else if (mode === 'delivery' && onDeliveryAdded) {
+          onDeliveryAdded(coord);
+        }
+      }, 100);
+    },
+    [editable, onWarehouseSet, onDeliveryAdded, mode]
+  );
 
   useEffect(() => {
     if (!map.current || !editable) return;
@@ -128,11 +196,13 @@ const MapComponent: React.FC<MapComponentProps> = ({
     return () => {
       map.current?.off('click', handleMapClick);
     };
-  }, [warehousePin, editable, onWarehouseSet]);
+  }, [editable, handleMapClick]);
 
   return (
-    <div ref={mapContainer} className="w-full h-96 rounded-lg border border-gray-300 shadow-md" />
+    <div className="w-full h-full rounded-lg border border-gray-300 shadow-md overflow-hidden">
+      <div ref={mapContainer} className="w-full h-full leaflet-map" />
+    </div>
   );
 };
 
-export default MapComponent;
+export default React.memo(MapComponent);
