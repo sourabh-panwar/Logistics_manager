@@ -21,7 +21,7 @@ def assign_routes_to_fleet(clusters: List[RouteCluster], fleet: List[Truck]) -> 
                     order.is_assigned = True
                     
                 assigned = True
-                break  
+                break
         
         if not assigned:
             for order in cluster.orders:
