@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import List, Optional
 
+
 class Order(BaseModel):
     id: str
     lat: float
@@ -19,7 +20,7 @@ class RouteCluster(BaseModel):
     cluster_id: str
     orders: List[Order]
     total_weight: float
-    total_route_distance: float = 0.0  
+    total_route_distance: float
     
     def is_valid(self, max_capacity: float) -> bool:
         return self.total_weight <= max_capacity
