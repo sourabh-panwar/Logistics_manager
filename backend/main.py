@@ -6,7 +6,7 @@ from cluster_engine import generate_route_clusters
 from dispatcher import assign_routes_to_fleet
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from database import get_db
+from database import get_db, DeliveryAssignmentDB
 import crud
 import uuid
 
@@ -97,6 +97,7 @@ def list_trucks(db: Session = Depends(get_db)):
 @app.post("/api/run-dispatch")
 def execute_dispatch(payload: DispatchPayload, db: Session = Depends(get_db)):
     standard_truck_weight = payload.trucks[0].max_weight_capacity if payload.trucks else 1000.0
+    max_truck_capacity = max([t.max_weight_capacity for t in payload.trucks]) if payload.trucks else standard_truck_weight
     
     generated_routes = generate_route_clusters(
         all_orders=payload.orders,
@@ -107,7 +108,8 @@ def execute_dispatch(payload: DispatchPayload, db: Session = Depends(get_db)):
     
     final_manifest = assign_routes_to_fleet(
         clusters=generated_routes,
-        fleet=payload.trucks
+        fleet=payload.trucks,
+        max_truck_capacity=max_truck_capacity
     )
     
     return final_manifest
@@ -116,6 +118,7 @@ def execute_dispatch(payload: DispatchPayload, db: Session = Depends(get_db)):
 @app.post("/api/dispatch")
 def save_dispatch(payload: DispatchPayload, db: Session = Depends(get_db)):
     standard_truck_weight = payload.trucks[0].max_weight_capacity if payload.trucks else 1000.0
+    max_truck_capacity = max([t.max_weight_capacity for t in payload.trucks]) if payload.trucks else standard_truck_weight
     
     generated_routes = generate_route_clusters(
         all_orders=payload.orders,
@@ -126,7 +129,8 @@ def save_dispatch(payload: DispatchPayload, db: Session = Depends(get_db)):
     
     final_manifest = assign_routes_to_fleet(
         clusters=generated_routes,
-        fleet=payload.trucks
+        fleet=payload.trucks,
+        max_truck_capacity=max_truck_capacity
     )
     
     db_dispatch = crud.create_dispatch(db, payload.warehouse_lat, payload.warehouse_lng)
@@ -145,10 +149,15 @@ def save_dispatch(payload: DispatchPayload, db: Session = Depends(get_db)):
                 )
                 crud.update_order_status(db, order.id, "assigned")
     
+    rejected_orders = final_manifest.get("rejected_orders", [])
+    for order in rejected_orders:
+        crud.update_order_status(db, order.id, "rejected")
+    
     return {
         "dispatch_id": db_dispatch.id,
         "fleet_assignments": final_manifest["fleet_assignments"],
-        "failed_orders": final_manifest["failed_orders"]
+        "failed_orders": final_manifest["failed_orders"],
+        "rejected_orders": rejected_orders
     }
 
 
@@ -158,21 +167,24 @@ def get_active_deliveries(db: Session = Depends(get_db)):
     result = {}
     
     for assignment in assignments:
-        truck_id = assignment.truck_id
-        if truck_id not in result:
-            result[truck_id] = {
-                "truck_id": truck_id,
+        key = f"{assignment.dispatch_id}_{assignment.truck_id}"
+        if key not in result:
+            result[key] = {
+                "assignment_id": key,
+                "dispatch_id": assignment.dispatch_id,
+                "truck_id": assignment.truck_id,
                 "orders": [],
                 "total_weight": 0,
                 "total_distance": 0,
                 "status": "active"
             }
-        result[truck_id]["orders"].append({
+        result[key]["orders"].append({
+            "assignment_id": assignment.id,
             "order_id": assignment.order_id,
             "cluster_id": assignment.cluster_id
         })
-        result[truck_id]["total_weight"] += assignment.total_weight
-        result[truck_id]["total_distance"] += assignment.total_distance
+        result[key]["total_weight"] += assignment.total_weight
+        result[key]["total_distance"] += assignment.total_distance
     
     return list(result.values())
 
@@ -206,3 +218,60 @@ def complete_order(order_id: str, db: Session = Depends(get_db)):
     
     updated_order = crud.update_order_status(db, order_id, "delivered")
     return {"id": updated_order.id, "status": updated_order.status}
+
+
+@app.put("/api/assignments/{assignment_id}/complete")
+def complete_assignment(assignment_id: str, db: Session = Depends(get_db)):
+    assignment = db.query(DeliveryAssignmentDB).filter(
+        DeliveryAssignmentDB.id == assignment_id
+    ).first()
+    
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    crud.update_assignment_status(db, assignment_id, "delivered")
+
+    crud.update_order_status(db, assignment.order_id, "delivered")
+    
+    dispatch_assignments = crud.get_dispatch_assignments(db, assignment.dispatch_id)
+    all_delivered = all(a.status == "delivered" for a in dispatch_assignments)
+    
+    if all_delivered:
+        crud.mark_dispatch_completed(db, assignment.dispatch_id)
+    
+    return {
+        "assignment_id": assignment_id,
+        "status": "delivered",
+        "dispatch_completed": all_delivered
+    }
+
+@app.put("/api/dispatch-truck/{dispatch_id}/{truck_id}/complete")
+def complete_dispatch_truck(dispatch_id: str, truck_id: str, db: Session = Depends(get_db)):
+    assignments = db.query(DeliveryAssignmentDB).filter(
+        DeliveryAssignmentDB.dispatch_id == dispatch_id,
+        DeliveryAssignmentDB.truck_id == truck_id,
+        DeliveryAssignmentDB.status.in_(["assigned", "in_transit"])
+    ).all()
+    
+    if not assignments:
+        raise HTTPException(status_code=404, detail="No active assignments found")
+    
+    # Mark all assignments for this truck/dispatch as delivered
+    for assignment in assignments:
+        crud.update_assignment_status(db, assignment.id, "delivered")
+        crud.update_order_status(db, assignment.order_id, "delivered")
+    
+    # Check if all assignments in this dispatch are delivered
+    dispatch_assignments = crud.get_dispatch_assignments(db, dispatch_id)
+    all_delivered = all(a.status == "delivered" for a in dispatch_assignments)
+    
+    # If all delivered, mark dispatch as completed
+    if all_delivered:
+        crud.mark_dispatch_completed(db, dispatch_id)
+    
+    return {
+        "dispatch_id": dispatch_id,
+        "truck_id": truck_id,
+        "assignments_completed": len(assignments),
+        "dispatch_completed": all_delivered
+    }

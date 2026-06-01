@@ -1,8 +1,21 @@
 from typing import List, Dict, Any
 from models import Truck, RouteCluster, Order
 
-def assign_routes_to_fleet(clusters: List[RouteCluster], fleet: List[Truck]) -> Dict[str, Any]:
-    sorted_clusters = sorted(clusters, key=lambda c: c.total_route_distance, reverse=True)
+def assign_routes_to_fleet(clusters: List[RouteCluster], fleet: List[Truck], max_truck_capacity: float = None) -> Dict[str, Any]:
+    if max_truck_capacity is None and fleet:
+        max_truck_capacity = max(truck.max_weight_capacity for truck in fleet)
+    
+    # Pre-filter clusters and orders that exceed max truck capacity
+    valid_clusters = []
+    rejected_orders = []
+    
+    for cluster in clusters:
+        if max_truck_capacity and cluster.total_weight > max_truck_capacity:
+            rejected_orders.extend(cluster.orders)
+        else:
+            valid_clusters.append(cluster)
+    
+    sorted_clusters = sorted(valid_clusters, key=lambda c: c.total_route_distance, reverse=True)
 
     assignments = {truck.id: [] for truck in fleet}
     failed_orders = []
@@ -30,5 +43,6 @@ def assign_routes_to_fleet(clusters: List[RouteCluster], fleet: List[Truck]) -> 
 
     return {
         "fleet_assignments": assignments,
-        "failed_orders": failed_orders
+        "failed_orders": failed_orders,
+        "rejected_orders": rejected_orders
     }

@@ -24,12 +24,15 @@ export interface RouteCluster {
 export interface DispatchResult {
   fleet_assignments: Record<string, RouteCluster[]>;
   failed_orders: Order[];
+  rejected_orders?: Order[];
   dispatch_id?: string;
 }
 
 export interface DeliveryAssignment {
+  assignment_id?: string;
   truck_id: string;
-  orders: Array<{order_id: string; cluster_id: string}>;
+  dispatch_id?: string;
+  orders: Array<{assignment_id?: string; order_id: string; cluster_id: string}>;
   total_weight: number;
   total_distance: number;
   status: string;

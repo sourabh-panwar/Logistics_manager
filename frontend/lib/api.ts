@@ -38,6 +38,11 @@ export const dispatchAPI = {
   
   getActive: () => api.get('/api/active-deliveries'),
   getHistory: () => api.get('/api/dispatch-history'),
+  
+  completeAssignment: (assignmentId: string) => api.put(`/api/assignments/${assignmentId}/complete`),
+  
+  completeDispatchTruck: (dispatchId: string, truckId: string) =>
+    api.put(`/api/dispatch-truck/${dispatchId}/${truckId}/complete`),
 };
 
 export default api;

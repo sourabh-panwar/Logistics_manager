@@ -31,20 +31,23 @@ export default function ActiveDeliveriesPage() {
     }
   };
 
-  const handleMarkComplete = async (truckId: string) => {
+  // UPDATED: Now calls the backend API and requires both IDs
+  const handleMarkComplete = async (dispatchId: string, truckId: string) => {
     setError(null);
 
     try {
+      await dispatchAPI.completeDispatchTruck(dispatchId, truckId);
+      // Remove the completed assignment from the list
       setAssignments((prev) =>
-        prev.map((assignment) =>
-          assignment.truck_id === truckId
-            ? {...assignment, status: 'delivered'}
-            : assignment
-        )
+        prev.filter((assignment) => !(assignment.dispatch_id === dispatchId && assignment.truck_id === truckId))
       );
+      // Refresh to ensure we're in sync with backend
+      setTimeout(() => fetchActiveDeliveries(), 500);
     } catch (err) {
       setError('Failed to mark delivery as complete.');
       console.error(err);
+      // Refresh on error to get latest state
+      fetchActiveDeliveries();
     }
   };
 
@@ -116,10 +119,11 @@ export default function ActiveDeliveriesPage() {
           ) : (
             <div className="grid md:grid-cols-2 gap-6">
               {assignments.map((assignment) => (
+                // Pass an arrow function to ensure both IDs get passed correctly
                 <DeliveryCard
                   key={assignment.truck_id}
                   assignment={assignment}
-                  onMarkComplete={handleMarkComplete}
+                  onMarkComplete={() => handleMarkComplete(assignment.dispatch_id, assignment.truck_id)}
                 />
               ))}
             </div>

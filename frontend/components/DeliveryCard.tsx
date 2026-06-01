@@ -5,7 +5,7 @@ import {DeliveryAssignment} from '@/lib/types';
 
 interface DeliveryCardProps {
   assignment: DeliveryAssignment;
-  onMarkComplete?: (truckId: string) => void;
+  onMarkComplete?: (dispatchId: string, truckId: string) => void;
 }
 
 const DeliveryCard: React.FC<DeliveryCardProps> = ({assignment, onMarkComplete}) => {
@@ -26,9 +26,9 @@ const DeliveryCard: React.FC<DeliveryCardProps> = ({assignment, onMarkComplete})
             {assignment.status.replace('_', ' ').toUpperCase()}
           </p>
         </div>
-        {assignment.status !== 'delivered' && onMarkComplete && (
+        {assignment.status !== 'delivered' && onMarkComplete && assignment.dispatch_id && (
           <button
-            onClick={() => onMarkComplete(assignment.truck_id)}
+            onClick={() => onMarkComplete(assignment.dispatch_id!, assignment.truck_id)}
             className="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded transition"
           >
             Mark Complete
