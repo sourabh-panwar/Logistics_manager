@@ -4,7 +4,7 @@ from typing import List
 from models import Order, Truck
 from cluster_engine import generate_route_clusters
 from dispatcher import assign_routes_to_fleet
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from database import get_db, DeliveryAssignmentDB
 import crud
@@ -24,22 +24,22 @@ app.add_middleware(
 class DispatchPayload(BaseModel):
     orders: List[Order]
     trucks: List[Truck]
-    warehouse_lat: float
-    warehouse_lng: float
+    warehouse_lat: float = Field(ge=-90, le=90)
+    warehouse_lng: float = Field(ge=-180, le=180)
 
 
 class OrderCreate(BaseModel):
     id: str
-    lat: float
-    lng: float
-    weight: float
-    priority: int = 1
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    weight: float = Field(gt=0)
+    priority: int = Field(default=1, ge=1)
 
 
 class TruckCreate(BaseModel):
     id: str
-    max_weight_capacity: float
-    max_daily_distance: float
+    max_weight_capacity: float = Field(gt=0)
+    max_daily_distance: float = Field(gt=0)
 
 
 @app.get("/")
@@ -52,7 +52,7 @@ def create_order(order: OrderCreate, db: Session = Depends(get_db)):
     existing = crud.get_order(db, order.id)
     if existing:
         raise HTTPException(status_code=400, detail="Order already exists")
-    db_order = crud.create_order(db, Order(**order.dict()))
+    db_order = crud.create_order(db, Order(**order.model_dump()))
     return {"id": db_order.id, "status": db_order.status}
 
 
@@ -77,7 +77,7 @@ def create_truck(truck: TruckCreate, db: Session = Depends(get_db)):
     existing = crud.get_truck(db, truck.id)
     if existing:
         raise HTTPException(status_code=400, detail="Truck already exists")
-    db_truck = crud.create_truck(db, Truck(**truck.dict()))
+    db_truck = crud.create_truck(db, Truck(**truck.model_dump()))
     return {"id": db_truck.id}
 
 
@@ -96,12 +96,11 @@ def list_trucks(db: Session = Depends(get_db)):
 
 @app.post("/api/run-dispatch")
 def execute_dispatch(payload: DispatchPayload, db: Session = Depends(get_db)):
-    standard_truck_weight = payload.trucks[0].max_weight_capacity if payload.trucks else 1000.0
-    max_truck_capacity = max([t.max_weight_capacity for t in payload.trucks]) if payload.trucks else standard_truck_weight
+    max_truck_capacity = max([t.max_weight_capacity for t in payload.trucks]) if payload.trucks else 1000.0
     
     generated_routes = generate_route_clusters(
         all_orders=payload.orders,
-        truck_max_weight=standard_truck_weight,
+        truck_max_weight=max_truck_capacity,
         warehouse_lat=payload.warehouse_lat,
         warehouse_lng=payload.warehouse_lng
     )
@@ -117,12 +116,19 @@ def execute_dispatch(payload: DispatchPayload, db: Session = Depends(get_db)):
 
 @app.post("/api/dispatch")
 def save_dispatch(payload: DispatchPayload, db: Session = Depends(get_db)):
-    standard_truck_weight = payload.trucks[0].max_weight_capacity if payload.trucks else 1000.0
-    max_truck_capacity = max([t.max_weight_capacity for t in payload.trucks]) if payload.trucks else standard_truck_weight
+    max_truck_capacity = max([t.max_weight_capacity for t in payload.trucks]) if payload.trucks else 1000.0
+
+    for order in payload.orders:
+        if not crud.get_order(db, order.id):
+            crud.create_order(db, order)
+
+    for truck in payload.trucks:
+        if not crud.get_truck(db, truck.id):
+            crud.create_truck(db, truck)
     
     generated_routes = generate_route_clusters(
         all_orders=payload.orders,
-        truck_max_weight=standard_truck_weight,
+        truck_max_weight=max_truck_capacity,
         warehouse_lat=payload.warehouse_lat,
         warehouse_lng=payload.warehouse_lng
     )
@@ -176,17 +182,23 @@ def get_active_deliveries(db: Session = Depends(get_db)):
                 "orders": [],
                 "total_weight": 0,
                 "total_distance": 0,
-                "status": "active"
+                "status": "active",
+                "_counted_clusters": set()
             }
         result[key]["orders"].append({
             "assignment_id": assignment.id,
             "order_id": assignment.order_id,
             "cluster_id": assignment.cluster_id
         })
-        result[key]["total_weight"] += assignment.total_weight
-        result[key]["total_distance"] += assignment.total_distance
+        if assignment.cluster_id not in result[key]["_counted_clusters"]:
+            result[key]["total_weight"] += assignment.total_weight
+            result[key]["total_distance"] += assignment.total_distance
+            result[key]["_counted_clusters"].add(assignment.cluster_id)
     
-    return list(result.values())
+    return [
+        {field: value for field, value in assignment.items() if field != "_counted_clusters"}
+        for assignment in result.values()
+    ]
 
 
 @app.get("/api/dispatch-history")

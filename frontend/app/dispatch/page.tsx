@@ -1,15 +1,17 @@
 'use client';
 
-import React, {useState, useReducer} from 'react';
+import React, {useReducer} from 'react';
+import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import Navigation from '@/components/Navigation';
-import MapComponent from '@/components/MapComponent';
 import DispatchConfirmModal from '@/components/DispatchConfirmModal';
 import Toast from '@/components/Toast';
-import {Order, Truck, Coordinate, DispatchResult} from '@/lib/types';
+import {Coordinate, DispatchResult, Order, Truck} from '@/lib/types';
 import {dispatchAPI} from '@/lib/api';
-import Link from 'next/link';
 
-type DispatchStep = 'warehouse' | 'deliveries' | 'trucks' | 'calculate' | 'review';
+const MapComponent = dynamic(() => import('@/components/MapComponent'), {ssr: false});
+
+type DispatchStep = 'warehouse' | 'deliveries' | 'trucks' | 'calculate';
 
 interface DispatchState {
   currentStep: DispatchStep;
@@ -60,21 +62,29 @@ const initialState: DispatchState = {
   showConfirmModal: false,
 };
 
+const steps: Array<{id: DispatchStep; label: string}> = [
+  {id: 'warehouse', label: 'Warehouse'},
+  {id: 'deliveries', label: 'Deliveries'},
+  {id: 'trucks', label: 'Fleet'},
+  {id: 'calculate', label: 'Review'},
+];
+
 function dispatchReducer(state: DispatchState, action: DispatchAction): DispatchState {
   switch (action.type) {
     case 'SET_STEP':
       return {...state, currentStep: action.payload};
     case 'SET_WAREHOUSE':
-      return {...state, warehouse: action.payload};
+      return {...state, warehouse: action.payload, error: null};
     case 'ADD_DELIVERY':
       return {
         ...state,
         deliveries: [...state.deliveries, action.payload],
         tempDeliveryWeight: '',
         tempDeliveryCoord: null,
+        error: null,
       };
     case 'REMOVE_DELIVERY':
-      return {...state, deliveries: state.deliveries.filter((_, i) => i !== action.payload)};
+      return {...state, deliveries: state.deliveries.filter((_, index) => index !== action.payload)};
     case 'SET_TEMP_DELIVERY_WEIGHT':
       return {...state, tempDeliveryWeight: action.payload};
     case 'SET_TEMP_DELIVERY_COORD':
@@ -86,9 +96,10 @@ function dispatchReducer(state: DispatchState, action: DispatchAction): Dispatch
         ...state,
         trucks: [...state.trucks, action.payload],
         truckForm: {id: '', maxWeight: '', maxDistance: ''},
+        error: null,
       };
     case 'REMOVE_TRUCK':
-      return {...state, trucks: state.trucks.filter((_, i) => i !== action.payload)};
+      return {...state, trucks: state.trucks.filter((_, index) => index !== action.payload)};
     case 'SET_LOADING':
       return {...state, loading: action.payload};
     case 'SET_ERROR':
@@ -110,61 +121,80 @@ function dispatchReducer(state: DispatchState, action: DispatchAction): Dispatch
   }
 }
 
+const inputClass =
+  'w-full rounded-md border border-white/20 bg-dark-card px-3 py-2.5 text-sm text-white outline-none transition placeholder:text-stone-500 focus:border-stone-950';
+const labelClass = 'mb-2 block text-xs font-semibold uppercase tracking-wide text-stone-500';
+
 export default function DispatchPage() {
   const [state, dispatch] = useReducer(dispatchReducer, initialState);
 
-  const handleWarehouseSet = (coord: Coordinate) => {
-    dispatch({type: 'SET_WAREHOUSE', payload: coord});
-  };
-
-  const handleDeliveryMapClick = (coord: Coordinate) => {
-    dispatch({type: 'SET_TEMP_DELIVERY_COORD', payload: coord});
+  const isStepComplete = (step: DispatchStep) => {
+    if (step === 'warehouse') return Boolean(state.warehouse);
+    if (step === 'deliveries') return state.deliveries.length > 0;
+    if (step === 'trucks') return state.trucks.length > 0;
+    if (step === 'calculate') return Boolean(state.dispatchResult);
+    return false;
   };
 
   const addDelivery = () => {
-    if (!state.tempDeliveryCoord || !state.tempDeliveryWeight) {
-      dispatch({type: 'SET_ERROR', payload: 'Please enter weight and click on map for location'});
+    const weight = Number(state.tempDeliveryWeight);
+    if (!state.tempDeliveryCoord || !Number.isFinite(weight) || weight <= 0) {
+      dispatch({type: 'SET_ERROR', payload: 'Select a delivery point and enter a positive weight.'});
       return;
     }
 
-    const newDelivery = {
-      id: `ORDER-${state.deliveries.length + 1}`,
-      lat: state.tempDeliveryCoord.lat,
-      lng: state.tempDeliveryCoord.lng,
-      weight: parseFloat(state.tempDeliveryWeight),
-    };
-
-    dispatch({type: 'ADD_DELIVERY', payload: newDelivery});
-    dispatch({type: 'SET_ERROR', payload: null});
-  };
-
-  const removeDelivery = (index: number) => {
-    dispatch({type: 'REMOVE_DELIVERY', payload: index});
+    dispatch({
+      type: 'ADD_DELIVERY',
+      payload: {
+        id: `ORDER-${String(state.deliveries.length + 1).padStart(3, '0')}`,
+        lat: state.tempDeliveryCoord.lat,
+        lng: state.tempDeliveryCoord.lng,
+        weight,
+      },
+    });
   };
 
   const addTruck = () => {
-    if (!state.truckForm.id || !state.truckForm.maxWeight || !state.truckForm.maxDistance) {
-      dispatch({type: 'SET_ERROR', payload: 'Please fill all truck fields'});
+    const maxWeight = Number(state.truckForm.maxWeight);
+    const maxDistance = Number(state.truckForm.maxDistance);
+    const truckId = state.truckForm.id.trim();
+
+    if (!truckId || !Number.isFinite(maxWeight) || !Number.isFinite(maxDistance) || maxWeight <= 0 || maxDistance <= 0) {
+      dispatch({type: 'SET_ERROR', payload: 'Enter a truck ID, positive capacity, and positive daily distance.'});
       return;
     }
 
-    const newTruck = {
-      id: state.truckForm.id,
-      maxWeight: parseFloat(state.truckForm.maxWeight),
-      maxDistance: parseFloat(state.truckForm.maxDistance),
-    };
+    if (state.trucks.some((truck) => truck.id === truckId)) {
+      dispatch({type: 'SET_ERROR', payload: 'Truck IDs must be unique.'});
+      return;
+    }
 
-    dispatch({type: 'ADD_TRUCK', payload: newTruck});
-    dispatch({type: 'SET_ERROR', payload: null});
+    dispatch({type: 'ADD_TRUCK', payload: {id: truckId, maxWeight, maxDistance}});
   };
 
-  const removeTruck = (index: number) => {
-    dispatch({type: 'REMOVE_TRUCK', payload: index});
+  const buildPayload = () => {
+    const orders: Order[] = state.deliveries.map((delivery) => ({
+      id: delivery.id,
+      lat: delivery.lat,
+      lng: delivery.lng,
+      weight: delivery.weight,
+      priority: 1,
+      is_assigned: false,
+    }));
+
+    const trucks: Truck[] = state.trucks.map((truck) => ({
+      id: truck.id,
+      max_weight_capacity: truck.maxWeight,
+      max_daily_distance: truck.maxDistance,
+      distance_used: 0,
+    }));
+
+    return {orders, trucks};
   };
 
   const handleCalculateDispatch = async () => {
     if (!state.warehouse || state.deliveries.length === 0 || state.trucks.length === 0) {
-      dispatch({type: 'SET_ERROR', payload: 'Please complete all previous steps'});
+      dispatch({type: 'SET_ERROR', payload: 'Complete warehouse, deliveries, and fleet before review.'});
       return;
     }
 
@@ -172,35 +202,20 @@ export default function DispatchPage() {
     dispatch({type: 'SET_ERROR', payload: null});
 
     try {
-      const orders: Order[] = state.deliveries.map((d) => ({
-        id: d.id,
-        lat: d.lat,
-        lng: d.lng,
-        weight: d.weight,
-        priority: 1,
-        is_assigned: false,
-      }));
-
-      const truckData: Truck[] = state.trucks.map((t) => ({
-        id: t.id,
-        max_weight_capacity: t.maxWeight,
-        max_daily_distance: t.maxDistance,
-        distance_used: 0,
-      }));
-
+      const {orders, trucks} = buildPayload();
       const response = await dispatchAPI.calculate({
         orders,
-        trucks: truckData,
+        trucks,
         warehouse_lat: state.warehouse.lat,
         warehouse_lng: state.warehouse.lng,
       });
 
       dispatch({type: 'SET_DISPATCH_RESULT', payload: response.data});
       dispatch({type: 'SHOW_CONFIRM_MODAL'});
-      dispatch({type: 'SHOW_TOAST', payload: {message: 'Dispatch plan calculated successfully!', type: 'success'}});
+      dispatch({type: 'SHOW_TOAST', payload: {message: 'Dispatch manifest calculated.', type: 'success'}});
     } catch (err) {
-      dispatch({type: 'SET_ERROR', payload: 'Failed to calculate dispatch plan. Please try again.'});
-      dispatch({type: 'SHOW_TOAST', payload: {message: 'Error calculating dispatch plan', type: 'error'}});
+      dispatch({type: 'SET_ERROR', payload: 'Dispatch calculation failed. Check backend status and try again.'});
+      dispatch({type: 'SHOW_TOAST', payload: {message: 'Calculation failed.', type: 'error'}});
       console.error(err);
     } finally {
       dispatch({type: 'SET_LOADING', payload: false});
@@ -208,408 +223,343 @@ export default function DispatchPage() {
   };
 
   const handleSaveDispatch = async () => {
-    if (!state.warehouse || state.deliveries.length === 0 || state.trucks.length === 0) {
-      dispatch({type: 'SET_ERROR', payload: 'Invalid dispatch data'});
-      return;
-    }
+    if (!state.warehouse) return;
 
     dispatch({type: 'SET_LOADING', payload: true});
     dispatch({type: 'SET_ERROR', payload: null});
 
     try {
-      const orders: Order[] = state.deliveries.map((d) => ({
-        id: d.id,
-        lat: d.lat,
-        lng: d.lng,
-        weight: d.weight,
-        priority: 1,
-        is_assigned: false,
-      }));
-
-      const truckData: Truck[] = state.trucks.map((t) => ({
-        id: t.id,
-        max_weight_capacity: t.maxWeight,
-        max_daily_distance: t.maxDistance,
-        distance_used: 0,
-      }));
-
+      const {orders, trucks} = buildPayload();
       await dispatchAPI.save({
         orders,
-        trucks: truckData,
+        trucks,
         warehouse_lat: state.warehouse.lat,
         warehouse_lng: state.warehouse.lng,
       });
 
-      dispatch({type: 'SHOW_TOAST', payload: {message: 'Dispatch activated successfully!', type: 'success'}});
+      dispatch({type: 'SHOW_TOAST', payload: {message: 'Dispatch activated.', type: 'success'}});
       setTimeout(() => {
         window.location.href = '/active-deliveries';
-      }, 1500);
+      }, 900);
     } catch (err) {
-      dispatch({type: 'SET_ERROR', payload: 'Failed to save dispatch. Please try again.'});
-      dispatch({type: 'SHOW_TOAST', payload: {message: 'Error saving dispatch', type: 'error'}});
+      dispatch({type: 'SET_ERROR', payload: 'Failed to activate dispatch.'});
+      dispatch({type: 'SHOW_TOAST', payload: {message: 'Activation failed.', type: 'error'}});
       console.error(err);
     } finally {
       dispatch({type: 'SET_LOADING', payload: false});
     }
   };
 
-  const stepIndicator = [
-    {number: 1, label: 'Warehouse', id: 'warehouse' as DispatchStep},
-    {number: 2, label: 'Deliveries', id: 'deliveries' as DispatchStep},
-    {number: 3, label: 'Trucks', id: 'trucks' as DispatchStep},
-    {number: 4, label: 'Calculate', id: 'calculate' as DispatchStep},
-  ];
-
-  const isStepComplete = (step: DispatchStep) => {
-    if (step === 'warehouse') return state.warehouse !== null;
-    if (step === 'deliveries') return state.deliveries.length > 0;
-    if (step === 'trucks') return state.trucks.length > 0;
-    if (step === 'calculate') return state.dispatchResult !== null;
-    return false;
-  };
+  const totalWeight = state.deliveries.reduce((sum, delivery) => sum + delivery.weight, 0);
 
   return (
     <>
       <Navigation />
-      <main className="min-h-screen bg-gray-50 py-8 px-6">
-        <div className="max-w-6xl mx-auto">
-          <div className="mb-8">
-            <Link href="/" className="text-blue-600 hover:text-blue-800 text-sm font-semibold mb-4 inline-block">
-              ← Back to Home
-            </Link>
-            <h1 className="text-4xl font-bold text-gray-800">New Dispatch</h1>
-            <p className="text-gray-600 mt-2">Follow the steps to create and optimize a delivery dispatch plan</p>
+      <main className="min-h-screen bg-dark-main bg-dot-pattern px-5 py-8 text-white">
+        <div className="mx-auto max-w-7xl">
+          <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <Link href="/" className="text-sm font-semibold text-stone-500 transition hover:text-white">
+                Back to dashboard
+              </Link>
+              <h1 className="mt-3 text-3xl font-semibold text-white">New dispatch</h1>
+              <p className="mt-2 text-sm text-stone-500">Build a route manifest from warehouse, order, and fleet constraints.</p>
+            </div>
+            <div className="grid grid-cols-3 overflow-hidden rounded-md border border-white/10 bg-dark-card text-center shadow-sm">
+              <div className="border-r border-white/10 px-4 py-3">
+                <p className="text-lg font-semibold">{state.deliveries.length}</p>
+                <p className="text-xs text-stone-500">Orders</p>
+              </div>
+              <div className="border-r border-white/10 px-4 py-3">
+                <p className="text-lg font-semibold">{totalWeight.toFixed(0)}</p>
+                <p className="text-xs text-stone-500">Kg</p>
+              </div>
+              <div className="px-4 py-3">
+                <p className="text-lg font-semibold">{state.trucks.length}</p>
+                <p className="text-xs text-stone-500">Trucks</p>
+              </div>
+            </div>
           </div>
 
-          <div className="mb-10 bg-white rounded-lg shadow-md p-6">
-            <div className="flex justify-between">
-              {stepIndicator.map((step) => (
-                <div key={step.id} className="flex flex-col items-center flex-1">
+          <div className="mb-6 rounded-md border border-white/10 bg-dark-card p-3 shadow-sm">
+            <div className="grid gap-2 sm:grid-cols-4">
+              {steps.map((step, index) => {
+                const active = state.currentStep === step.id;
+                const complete = isStepComplete(step.id);
+                return (
                   <button
-                    onClick={() => isStepComplete(step.id) && dispatch({type: 'SET_STEP', payload: step.id})}
-                    className={`w-12 h-12 rounded-full font-bold text-lg transition mb-2 ${
-                      state.currentStep === step.id
-                        ? 'bg-blue-600 text-white'
-                        : isStepComplete(step.id)
-                        ? 'bg-green-600 text-white hover:bg-green-700 cursor-pointer'
-                        : 'bg-gray-300 text-gray-600'
+                    key={step.id}
+                    onClick={() => (complete || index === 0) && dispatch({type: 'SET_STEP', payload: step.id})}
+                    className={`flex items-center gap-3 rounded-md px-3 py-3 text-left transition ${
+                      active ? 'bg-white text-black' : complete ? 'bg-emerald-500/10 text-emerald-400' : 'bg-white/5 text-stone-500'
                     }`}
                   >
-                    {state.currentStep === step.id ? step.number : isStepComplete(step.id) ? '✓' : step.number}
+                    <span className={`flex h-7 w-7 items-center justify-center rounded border text-xs font-semibold ${
+                      active ? 'border-white/20' : complete ? 'border-emerald-500/30' : 'border-white/10'
+                    }`}>
+                      {complete && !active ? '✓' : index + 1}
+                    </span>
+                    <span className="text-sm font-semibold">{step.label}</span>
                   </button>
-                  <span className={`text-sm font-semibold text-center ${state.currentStep === step.id ? 'text-blue-600' : 'text-gray-600'}`}>
-                    {step.label}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
           {state.error && (
-            <div className="mb-6 bg-red-50 border border-red-200 text-red-800 p-4 rounded-lg">
-              ⚠️ {state.error}
+            <div className="mb-6 rounded-md border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-900">
+              {state.error}
             </div>
           )}
 
           {state.toast && (
-            <Toast
-              message={state.toast.message}
-              type={state.toast.type}
-              onClose={() => dispatch({type: 'HIDE_TOAST'})}
-            />
+            <Toast message={state.toast.message} type={state.toast.type} onClose={() => dispatch({type: 'HIDE_TOAST'})} />
           )}
 
-          <div className="bg-white rounded-lg shadow-md p-8">
+          <section className="rounded-md border border-white/10 bg-dark-card p-5 shadow-sm">
             {state.currentStep === 'warehouse' && (
-              <div className="flex flex-col h-[600px]">
-                <h2 className="text-2xl font-bold text-gray-800 mb-4">Step 1: Set Warehouse Location</h2>
-                <p className="text-gray-600 mb-6">Click on the map to mark your warehouse location</p>
-
-                <div className="flex-1 mb-6">
-                  <MapComponent onWarehouseSet={handleWarehouseSet} warehousePin={state.warehouse} editable={!state.warehouse} mode="warehouse" />
-                </div>
-
-                {state.warehouse && (
-                  <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4">
-                    <p className="text-green-800 font-semibold">✓ Warehouse Location Set</p>
-                    <p className="text-sm text-green-700 mt-1">
-                      Lat: {state.warehouse.lat.toFixed(4)}, Lng: {state.warehouse.lng.toFixed(4)}
-                    </p>
+              <div className="grid gap-5 lg:grid-cols-[0.72fr_1.28fr]">
+                <aside className="rounded-md border border-white/10 bg-white/5 p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/60">Step 1</p>
+                  <h2 className="mt-3 text-2xl font-semibold">Set warehouse</h2>
+                  <p className="mt-3 text-sm leading-6 text-stone-500">
+                    Click once on the map to choose the dispatch origin. You can return here and choose a new point.
+                  </p>
+                  {state.warehouse && (
+                    <div className="mt-6 rounded-md border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-400">
+                      <p className="font-semibold">Warehouse selected</p>
+                      <p className="mt-1">Lat {state.warehouse.lat.toFixed(4)}, Lng {state.warehouse.lng.toFixed(4)}</p>
+                    </div>
+                  )}
+                  <div className="mt-6 flex gap-3">
+                    <button
+                      onClick={() => dispatch({type: 'SET_STEP', payload: 'deliveries'})}
+                      disabled={!state.warehouse}
+                      className="rounded-md bg-dark-card px-5 py-3 text-sm font-semibold text-black transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+                    >
+                      Continue
+                    </button>
                   </div>
-                )}
-
-                <div className="flex gap-4">
-                  <Link href="/" className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded transition">
-                    Cancel
-                  </Link>
-                  <button
-                    onClick={() => dispatch({type: 'SET_STEP', payload: 'deliveries'})}
-                    disabled={!state.warehouse}
-                    className={`font-bold py-3 px-8 rounded transition ml-auto ${
-                      state.warehouse
-                        ? 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
-                        : 'bg-gray-300 text-gray-600 cursor-not-allowed'
-                    }`}
-                  >
-                    Continue to Deliveries →
-                  </button>
+                </aside>
+                <div className="h-[560px]">
+                  <MapComponent onWarehouseSet={(coord) => dispatch({type: 'SET_WAREHOUSE', payload: coord})} warehousePin={state.warehouse} mode="warehouse" />
                 </div>
               </div>
             )}
 
             {state.currentStep === 'deliveries' && (
-              <div className="flex flex-col h-[800px]">
-                <h2 className="text-2xl font-bold text-gray-800 mb-4">Step 2: Register Deliveries</h2>
-                <p className="text-gray-600 mb-6">Click on the map to add delivery locations, then enter the weight</p>
+              <div className="grid gap-5 lg:grid-cols-[1.25fr_0.75fr]">
+                <div className="h-[680px]">
+                  <MapComponent
+                    warehousePin={state.warehouse}
+                    deliveryPins={state.deliveries.map((delivery) => ({...delivery, type: 'delivery' as const}))}
+                    onDeliveryAdded={(coord) => dispatch({type: 'SET_TEMP_DELIVERY_COORD', payload: coord})}
+                    mode="delivery"
+                    tempPin={state.tempDeliveryCoord}
+                  />
+                </div>
+                <aside className="rounded-md border border-white/10 bg-white/5 p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/60">Step 2</p>
+                  <h2 className="mt-3 text-2xl font-semibold">Register deliveries</h2>
+                  <p className="mt-3 text-sm leading-6 text-stone-500">Select a delivery point on the map, then enter its package weight.</p>
 
-                <div className="flex-1 grid md:grid-cols-3 gap-6 mb-6">
-                  <div className="md:col-span-2">
-                    <MapComponent
-                      warehousePin={state.warehouse}
-                      deliveryPins={state.deliveries.map((d) => ({id: d.id, lat: d.lat, lng: d.lng, type: 'delivery' as const, weight: d.weight}))}
-                      onDeliveryAdded={handleDeliveryMapClick}
-                      editable={true}
-                      mode="delivery"
-                      tempPin={state.tempDeliveryCoord}
-                    />
-                  </div>
-
-                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 flex flex-col">
-                    <h3 className="font-bold text-gray-800 mb-4">Add New Delivery</h3>
+                  <div className="mt-6 rounded-md border border-white/10 bg-dark-card p-4">
                     {state.tempDeliveryCoord && (
-                      <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded">
-                        <p className="text-sm text-gray-700">
-                          <strong>Location:</strong> Lat: {state.tempDeliveryCoord.lat.toFixed(4)}, Lng: {state.tempDeliveryCoord.lng.toFixed(4)}
-                        </p>
-                      </div>
+                      <p className="mb-4 rounded border border-white/20 bg-white/10 px-3 py-2 text-xs font-medium text-white">
+                        Selected: {state.tempDeliveryCoord.lat.toFixed(4)}, {state.tempDeliveryCoord.lng.toFixed(4)}
+                      </p>
                     )}
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">
-                      Weight (kg)
-                    </label>
+                    <label className={labelClass}>Weight in kg</label>
                     <input
                       type="number"
-                      placeholder="Enter weight"
+                      min="1"
+                      placeholder="Example: 120"
                       value={state.tempDeliveryWeight}
-                      onChange={(e) => dispatch({type: 'SET_TEMP_DELIVERY_WEIGHT', payload: e.target.value})}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      onChange={(event) => dispatch({type: 'SET_TEMP_DELIVERY_WEIGHT', payload: event.target.value})}
+                      className={inputClass}
                     />
-                    <p className="text-xs text-gray-600 mb-3">
-                      {state.tempDeliveryCoord ? '✓ Location selected. Enter weight above.' : 'Click on the map to select delivery location first.'}
-                    </p>
                     <button
                       onClick={addDelivery}
                       disabled={!state.tempDeliveryCoord || !state.tempDeliveryWeight}
-                      className={`w-full font-bold py-2 px-4 rounded transition ${
-                        state.tempDeliveryCoord && state.tempDeliveryWeight
-                          ? 'bg-green-600 hover:bg-green-700 text-white cursor-pointer'
-                          : 'bg-gray-300 text-gray-600 cursor-not-allowed'
-                      }`}
+                      className="mt-4 w-full rounded-md bg-dark-card px-4 py-3 text-sm font-semibold text-black transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
                     >
-                      Add Delivery
+                      Add delivery
                     </button>
-                    <div className="mt-4 flex-1 overflow-y-auto">
-                      <p className="font-bold text-gray-800 mb-3">Deliveries ({state.deliveries.length})</p>
-                      <div className="space-y-2">
-                        {state.deliveries.map((delivery, index) => (
-                          <div key={index} className="bg-blue-50 border border-blue-200 rounded p-2 flex justify-between items-start text-xs">
-                            <div className="flex-1">
-                              <p className="font-semibold text-gray-800">{delivery.id}</p>
-                              <p className="text-gray-600">
-                                {delivery.weight}kg
-                              </p>
-                            </div>
-                            <button
-                              onClick={() => removeDelivery(index)}
-                              className="text-red-600 hover:text-red-800 font-bold ml-2"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
                   </div>
-                </div>
 
-                <div className="flex gap-4">
-                  <button
-                    onClick={() => dispatch({type: 'SET_STEP', payload: 'warehouse'})}
-                    className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded transition"
-                  >
-                    ← Back
-                  </button>
-                  <button
-                    onClick={() => dispatch({type: 'SET_STEP', payload: 'trucks'})}
-                    disabled={state.deliveries.length === 0}
-                    className={`font-bold py-3 px-8 rounded transition ml-auto ${
-                      state.deliveries.length > 0
-                        ? 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
-                        : 'bg-gray-300 text-gray-600 cursor-not-allowed'
-                    }`}
-                  >
-                    Continue to Trucks →
-                  </button>
-                </div>
+                  <div className="mt-5 max-h-72 overflow-y-auto rounded-md border border-white/10 bg-dark-card">
+                    {state.deliveries.length === 0 ? (
+                      <p className="p-4 text-sm text-stone-500">No deliveries added yet.</p>
+                    ) : (
+                      state.deliveries.map((delivery, index) => (
+                        <div key={delivery.id} className="flex items-center justify-between border-b border-white/5 p-3 last:border-b-0">
+                          <div>
+                            <p className="text-sm font-semibold text-white">{delivery.id}</p>
+                            <p className="text-xs text-stone-500">{delivery.weight} kg</p>
+                          </div>
+                          <button
+                            onClick={() => dispatch({type: 'REMOVE_DELIVERY', payload: index})}
+                            className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-stone-500 transition hover:border-rose-500/50 hover:text-rose-400"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <div className="mt-5 flex gap-3">
+                    <button onClick={() => dispatch({type: 'SET_STEP', payload: 'warehouse'})} className="rounded-md border border-white/20 px-4 py-3 text-sm font-semibold">
+                      Back
+                    </button>
+                    <button
+                      onClick={() => dispatch({type: 'SET_STEP', payload: 'trucks'})}
+                      disabled={state.deliveries.length === 0}
+                      className="ml-auto rounded-md bg-dark-card px-5 py-3 text-sm font-semibold text-black transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+                    >
+                      Continue
+                    </button>
+                  </div>
+                </aside>
               </div>
             )}
 
             {state.currentStep === 'trucks' && (
-              <div>
-                <h2 className="text-2xl font-bold text-gray-800 mb-4">Step 3: Register Trucks</h2>
-                <p className="text-gray-600 mb-6">Add your available trucks with their capacity constraints</p>
+              <div className="grid gap-5 lg:grid-cols-[0.8fr_1.2fr]">
+                <aside className="rounded-md border border-white/10 bg-white/5 p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/60">Step 3</p>
+                  <h2 className="mt-3 text-2xl font-semibold">Add fleet</h2>
+                  <p className="mt-3 text-sm leading-6 text-stone-500">Each truck needs a unique ID, load capacity, and maximum route distance.</p>
 
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                    <h3 className="font-bold text-gray-800 mb-4">Add Truck</h3>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Truck ID</label>
-                    <input
-                      type="text"
-                      placeholder="e.g., TRUCK-001"
-                      value={state.truckForm.id}
-                      onChange={(e) => dispatch({type: 'UPDATE_TRUCK_FORM', payload: {id: e.target.value}})}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Max Weight Capacity (kg)</label>
-                    <input
-                      type="number"
-                      placeholder="e.g., 1000"
-                      value={state.truckForm.maxWeight}
-                      onChange={(e) => dispatch({type: 'UPDATE_TRUCK_FORM', payload: {maxWeight: e.target.value}})}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Max Daily Distance (km)</label>
-                    <input
-                      type="number"
-                      placeholder="e.g., 500"
-                      value={state.truckForm.maxDistance}
-                      onChange={(e) => dispatch({type: 'UPDATE_TRUCK_FORM', payload: {maxDistance: e.target.value}})}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-
-                    <button
-                      onClick={addTruck}
-                      disabled={!state.truckForm.id || !state.truckForm.maxWeight || !state.truckForm.maxDistance}
-                      className={`w-full font-bold py-2 px-4 rounded transition ${
-                        state.truckForm.id && state.truckForm.maxWeight && state.truckForm.maxDistance
-                          ? 'bg-green-600 hover:bg-green-700 text-white cursor-pointer'
-                          : 'bg-gray-300 text-gray-600 cursor-not-allowed'
-                      }`}
-                    >
-                      Add Truck
+                  <div className="mt-6 space-y-4">
+                    <div>
+                      <label className={labelClass}>Truck ID</label>
+                      <input
+                        type="text"
+                        placeholder="TRUCK-001"
+                        value={state.truckForm.id}
+                        onChange={(event) => dispatch({type: 'UPDATE_TRUCK_FORM', payload: {id: event.target.value}})}
+                        className={inputClass}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Capacity in kg</label>
+                      <input
+                        type="number"
+                        min="1"
+                        placeholder="1000"
+                        value={state.truckForm.maxWeight}
+                        onChange={(event) => dispatch({type: 'UPDATE_TRUCK_FORM', payload: {maxWeight: event.target.value}})}
+                        className={inputClass}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Daily distance in km</label>
+                      <input
+                        type="number"
+                        min="1"
+                        placeholder="500"
+                        value={state.truckForm.maxDistance}
+                        onChange={(event) => dispatch({type: 'UPDATE_TRUCK_FORM', payload: {maxDistance: event.target.value}})}
+                        className={inputClass}
+                      />
+                    </div>
+                    <button onClick={addTruck} className="w-full rounded-md bg-dark-card px-4 py-3 text-sm font-semibold text-black transition hover:bg-stone-800">
+                      Add truck
                     </button>
                   </div>
+                </aside>
 
-                  <div>
-                    <h3 className="font-bold text-gray-800 mb-4">Trucks Added ({state.trucks.length})</h3>
-                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                <div className="rounded-md border border-white/10 bg-dark-card">
+                  <div className="border-b border-white/10 p-4">
+                    <p className="text-sm font-semibold text-white">Fleet list</p>
+                    <p className="mt-1 text-sm text-stone-500">{state.trucks.length} trucks registered</p>
+                  </div>
+                  {state.trucks.length === 0 ? (
+                    <p className="p-6 text-sm text-stone-500">No trucks added yet.</p>
+                  ) : (
+                    <div className="divide-y divide-white/5">
                       {state.trucks.map((truck, index) => (
-                        <div key={index} className="bg-purple-50 border border-purple-200 rounded p-3 flex justify-between items-start">
-                          <div>
-                            <p className="font-semibold text-gray-800">{truck.id}</p>
-                            <p className="text-xs text-gray-600">
-                              Capacity: {truck.maxWeight}kg | Distance: {truck.maxDistance}km
-                            </p>
-                          </div>
+                        <div key={truck.id} className="grid gap-4 p-4 sm:grid-cols-[1fr_1fr_1fr_auto] sm:items-center">
+                          <p className="text-sm font-semibold text-white">{truck.id}</p>
+                          <p className="text-sm text-stone-500">{truck.maxWeight} kg capacity</p>
+                          <p className="text-sm text-stone-500">{truck.maxDistance} km daily</p>
                           <button
-                            onClick={() => removeTruck(index)}
-                            className="text-red-600 hover:text-red-800 font-bold"
+                            onClick={() => dispatch({type: 'REMOVE_TRUCK', payload: index})}
+                            className="rounded border border-white/10 px-3 py-2 text-xs font-semibold text-stone-500 transition hover:border-rose-500/50 hover:text-rose-400"
                           >
-                            ✕
+                            Remove
                           </button>
                         </div>
                       ))}
                     </div>
+                  )}
+                  <div className="flex gap-3 border-t border-white/10 p-4">
+                    <button onClick={() => dispatch({type: 'SET_STEP', payload: 'deliveries'})} className="rounded-md border border-white/20 px-4 py-3 text-sm font-semibold">
+                      Back
+                    </button>
+                    <button
+                      onClick={() => dispatch({type: 'SET_STEP', payload: 'calculate'})}
+                      disabled={state.trucks.length === 0}
+                      className="ml-auto rounded-md bg-dark-card px-5 py-3 text-sm font-semibold text-black transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+                    >
+                      Review plan
+                    </button>
                   </div>
-                </div>
-
-                <div className="flex gap-4 mt-8">
-                  <button
-                    onClick={() => dispatch({type: 'SET_STEP', payload: 'deliveries'})}
-                    className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded transition"
-                  >
-                    ← Back
-                  </button>
-                  <button
-                    onClick={() => dispatch({type: 'SET_STEP', payload: 'calculate'})}
-                    disabled={state.trucks.length === 0}
-                    className={`font-bold py-3 px-8 rounded transition ml-auto ${
-                      state.trucks.length > 0
-                        ? 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
-                        : 'bg-gray-300 text-gray-600 cursor-not-allowed'
-                    }`}
-                  >
-                    Calculate Plan →
-                  </button>
                 </div>
               </div>
             )}
 
             {state.currentStep === 'calculate' && (
-              <div>
-                <h2 className="text-2xl font-bold text-gray-800 mb-4">Step 4: Calculate Dispatch Plan</h2>
-                <p className="text-gray-600 mb-6">Click the button below to calculate the optimal delivery plan</p>
-
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
-                  <h3 className="font-bold text-blue-900 mb-3">Dispatch Summary</h3>
-                  <div className="grid md:grid-cols-3 gap-4">
-                    <div>
-                      <p className="text-sm text-gray-600">Total Deliveries</p>
-                      <p className="text-2xl font-bold text-blue-600">{state.deliveries.length}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Total Weight</p>
-                      <p className="text-2xl font-bold text-blue-600">
-                        {state.deliveries.reduce((sum, d) => sum + d.weight, 0).toFixed(1)} kg
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Available Trucks</p>
-                      <p className="text-2xl font-bold text-blue-600">{state.trucks.length}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  onClick={handleCalculateDispatch}
-                  disabled={state.loading}
-                  className={`w-full font-bold py-4 px-6 rounded-lg transition text-lg ${
-                    state.loading
-                      ? 'bg-gray-400 text-gray-600 cursor-not-allowed'
-                      : 'bg-green-600 hover:bg-green-700 text-white cursor-pointer'
-                  }`}
-                >
-                  {state.loading ? 'Calculating...' : '✓ Calculate Optimal Plan'}
-                </button>
-
-                <div className="flex gap-4 mt-8">
+              <div className="grid gap-5 lg:grid-cols-[0.8fr_1.2fr]">
+                <aside className="rounded-md border border-white/10 bg-white/5 p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/60">Step 4</p>
+                  <h2 className="mt-3 text-2xl font-semibold">Calculate manifest</h2>
+                  <p className="mt-3 text-sm leading-6 text-stone-500">
+                    The backend will cluster orders, sequence stops, and assign routes across available trucks.
+                  </p>
                   <button
-                    onClick={() => dispatch({type: 'SET_STEP', payload: 'trucks'})}
+                    onClick={handleCalculateDispatch}
                     disabled={state.loading}
-                    className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded transition disabled:bg-gray-400"
+                    className="mt-6 w-full rounded-md bg-dark-card px-5 py-3 text-sm font-semibold text-black transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
                   >
-                    ← Back
+                    {state.loading ? 'Calculating...' : 'Calculate dispatch'}
                   </button>
+                  <button onClick={() => dispatch({type: 'SET_STEP', payload: 'trucks'})} className="mt-3 w-full rounded-md border border-white/20 px-5 py-3 text-sm font-semibold">
+                    Back to fleet
+                  </button>
+                </aside>
+                <div className="grid gap-4 sm:grid-cols-3">
+                  {[
+                    ['Orders', state.deliveries.length],
+                    ['Total weight', `${totalWeight.toFixed(1)} kg`],
+                    ['Fleet size', state.trucks.length],
+                  ].map(([label, value]) => (
+                    <div key={label} className="rounded-md border border-white/10 bg-dark-card p-5">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">{label}</p>
+                      <p className="mt-3 text-2xl font-semibold text-white">{value}</p>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
-
-            {state.showConfirmModal && state.dispatchResult && (
-              <DispatchConfirmModal
-                result={state.dispatchResult}
-                loading={state.loading}
-                onSave={handleSaveDispatch}
-                onRecalculate={() => {
-                  dispatch({type: 'HIDE_CONFIRM_MODAL'});
-                  dispatch({type: 'SET_STEP', payload: 'calculate'});
-                }}
-                onCancel={() => dispatch({type: 'HIDE_CONFIRM_MODAL'})}
-              />
-            )}
-          </div>
+          </section>
         </div>
       </main>
+
+      {state.showConfirmModal && state.dispatchResult && state.warehouse && (
+        <DispatchConfirmModal
+          result={state.dispatchResult}
+          warehouse={state.warehouse}
+          loading={state.loading}
+          onSave={handleSaveDispatch}
+          onRecalculate={() => {
+            dispatch({type: 'HIDE_CONFIRM_MODAL'});
+            dispatch({type: 'SET_STEP', payload: 'calculate'});
+          }}
+          onCancel={() => dispatch({type: 'HIDE_CONFIRM_MODAL'})}
+        />
+      )}
     </>
   );
 }

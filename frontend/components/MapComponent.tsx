@@ -13,21 +13,39 @@ interface MapPin {
   weight?: number;
 }
 
+interface RouteLine {
+  id: string;
+  truckId: string;
+  color: string;
+  coordinates: Coordinate[];
+}
+
 interface MapComponentProps {
   onWarehouseSet?: (coord: Coordinate) => void;
   onDeliveryAdded?: (coord: Coordinate) => void;
   warehousePin?: Coordinate | null;
   deliveryPins?: MapPin[];
+  routeLines?: RouteLine[];
   editable?: boolean;
   mode?: 'warehouse' | 'delivery';
   tempPin?: Coordinate | null;
 }
+
+const createMarkerIcon = (type: 'warehouse' | 'delivery' | 'temp', label: string) =>
+  L.divIcon({
+    className: '',
+    html: `<div class="map-marker map-marker--${type}">${label}</div>`,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+    popupAnchor: [0, -18],
+  });
 
 const MapComponent: React.FC<MapComponentProps> = ({
   onWarehouseSet,
   onDeliveryAdded,
   warehousePin,
   deliveryPins = [],
+  routeLines = [],
   editable = true,
   mode = 'warehouse',
   tempPin = null,
@@ -37,6 +55,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
   const warehouseMarker = useRef<L.Marker | null>(null);
   const deliveryMarkers = useRef<Map<string, L.Marker>>(new Map());
   const tempMarker = useRef<L.Marker | null>(null);
+  const routeLayers = useRef<L.Polyline[]>([]);
   const [mapReady, setMapReady] = useState(false);
   const clickDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -79,25 +98,16 @@ const MapComponent: React.FC<MapComponentProps> = ({
         warehouseMarker.current.setLatLng([warehousePin.lat, warehousePin.lng]);
       } else {
         warehouseMarker.current = L.marker([warehousePin.lat, warehousePin.lng], {
-          icon: L.icon({
-            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-red.png',
-            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-            iconSize: [25, 41],
-            iconAnchor: [12, 41],
-            popupAnchor: [1, -34],
-            shadowSize: [41, 41],
-          }),
+          icon: createMarkerIcon('warehouse', 'W'),
         }).addTo(map.current);
 
         warehouseMarker.current.bindPopup(
-          `<div class="font-semibold">Warehouse</div>
-           <div class="text-sm">Lat: ${warehousePin.lat.toFixed(4)}</div>
-           <div class="text-sm">Lng: ${warehousePin.lng.toFixed(4)}</div>`,
+          `<div class="map-popup-title">Warehouse</div>
+           <div class="map-popup-muted">Lat ${warehousePin.lat.toFixed(4)}</div>
+           <div class="map-popup-muted">Lng ${warehousePin.lng.toFixed(4)}</div>`,
           {closeButton: true}
         );
       }
-
-      map.current.setView([warehousePin.lat, warehousePin.lng], 12);
     }
   }, [warehousePin, mapReady]);
 
@@ -110,22 +120,16 @@ const MapComponent: React.FC<MapComponentProps> = ({
     deliveryMarkers.current.clear();
 
     deliveryPins.forEach((pin) => {
+      const shortLabel = pin.id.replace(/[^0-9]/g, '').slice(-2) || String(deliveryMarkers.current.size + 1);
       const marker = L.marker([pin.lat, pin.lng], {
-        icon: L.icon({
-          iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-blue.png',
-          shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-          iconSize: [25, 41],
-          iconAnchor: [12, 41],
-          popupAnchor: [1, -34],
-          shadowSize: [41, 41],
-        }),
+        icon: createMarkerIcon('delivery', shortLabel),
       }).addTo(map.current!);
 
       marker.bindPopup(
-        `<div class="font-semibold">Delivery ${pin.id}</div>
-         <div class="text-sm">Lat: ${pin.lat.toFixed(4)}</div>
-         <div class="text-sm">Lng: ${pin.lng.toFixed(4)}</div>
-         ${pin.weight ? `<div class="text-sm">Weight: ${pin.weight}kg</div>` : ''}`,
+        `<div class="map-popup-title">${pin.id}</div>
+         <div class="map-popup-muted">Lat ${pin.lat.toFixed(4)}</div>
+         <div class="map-popup-muted">Lng ${pin.lng.toFixed(4)}</div>
+         ${pin.weight ? `<div class="map-popup-muted">Weight ${pin.weight} kg</div>` : ''}`,
         {closeButton: true}
       );
 
@@ -141,20 +145,13 @@ const MapComponent: React.FC<MapComponentProps> = ({
         tempMarker.current.setLatLng([tempPin.lat, tempPin.lng]);
       } else {
         tempMarker.current = L.marker([tempPin.lat, tempPin.lng], {
-          icon: L.icon({
-            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-yellow.png',
-            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-            iconSize: [25, 41],
-            iconAnchor: [12, 41],
-            popupAnchor: [1, -34],
-            shadowSize: [41, 41],
-          }),
+          icon: createMarkerIcon('temp', '+'),
         }).addTo(map.current);
 
         tempMarker.current.bindPopup(
-          `<div class="font-semibold">Pending Location</div>
-           <div class="text-sm">Lat: ${tempPin.lat.toFixed(4)}</div>
-           <div class="text-sm">Lng: ${tempPin.lng.toFixed(4)}</div>`,
+          `<div class="map-popup-title">Pending location</div>
+           <div class="map-popup-muted">Lat ${tempPin.lat.toFixed(4)}</div>
+           <div class="map-popup-muted">Lng ${tempPin.lng.toFixed(4)}</div>`,
           {closeButton: true}
         );
       }
@@ -165,6 +162,54 @@ const MapComponent: React.FC<MapComponentProps> = ({
       tempMarker.current = null;
     }
   }, [tempPin, mapReady]);
+
+  useEffect(() => {
+    if (!map.current || !mapReady) return;
+
+    routeLayers.current.forEach((layer) => map.current?.removeLayer(layer));
+    routeLayers.current = [];
+
+    routeLines.forEach((route) => {
+      if (route.coordinates.length < 2) return;
+
+      const polyline = L.polyline(
+        route.coordinates.map((coord) => [coord.lat, coord.lng]),
+        {
+          color: route.color,
+          weight: 4,
+          opacity: 0.9,
+          lineCap: 'round',
+          lineJoin: 'round',
+        }
+      ).addTo(map.current!);
+
+      polyline.bindPopup(
+        `<div class="map-popup-title">${route.truckId}</div>
+         <div class="map-popup-muted">${route.coordinates.length - 1} route legs</div>`,
+        {closeButton: true}
+      );
+
+      routeLayers.current.push(polyline);
+    });
+  }, [routeLines, mapReady]);
+
+  useEffect(() => {
+    if (!map.current || !mapReady) return;
+
+    const points: Array<[number, number]> = [];
+    if (warehousePin) points.push([warehousePin.lat, warehousePin.lng]);
+    deliveryPins.forEach((pin) => points.push([pin.lat, pin.lng]));
+    if (tempPin) points.push([tempPin.lat, tempPin.lng]);
+    routeLines.forEach((route) =>
+      route.coordinates.forEach((coord) => points.push([coord.lat, coord.lng]))
+    );
+
+    if (points.length === 1) {
+      map.current.setView(points[0], 12);
+    } else if (points.length > 1) {
+      map.current.fitBounds(L.latLngBounds(points), {padding: [36, 36], maxZoom: 13});
+    }
+  }, [warehousePin, deliveryPins, tempPin, routeLines, mapReady]);
 
   const handleMapClick = useCallback(
     (e: L.LeafletMouseEvent) => {
@@ -199,7 +244,7 @@ const MapComponent: React.FC<MapComponentProps> = ({
   }, [editable, handleMapClick]);
 
   return (
-    <div className="w-full h-full rounded-lg border border-gray-300 shadow-md overflow-hidden">
+    <div className="h-full w-full overflow-hidden rounded-md border border-stone-200 bg-stone-100 shadow-sm">
       <div ref={mapContainer} className="w-full h-full leaflet-map" />
     </div>
   );

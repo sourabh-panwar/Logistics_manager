@@ -1,11 +1,7 @@
-import math
 from typing import List
 from models import Order, RouteCluster
 
-from route_optimizer import optimize_route_sequence
-
-def _calculate_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    return math.hypot(lat1 - lat2, lng1 - lng2)
+from route_optimizer import calculate_distance, optimize_route_sequence
 
 def generate_route_clusters(all_orders: List[Order], truck_max_weight: float, warehouse_lat: float, warehouse_lng: float) -> List[RouteCluster]:
     clusters = []
@@ -25,7 +21,7 @@ def generate_route_clusters(all_orders: List[Order], truck_max_weight: float, wa
             
             for i, candidate in enumerate(pending_orders):
                 if current_weight + candidate.weight <= truck_max_weight:
-                    dist_to_candidate = _calculate_distance(last_node.lat, last_node.lng, candidate.lat, candidate.lng)
+                    dist_to_candidate = calculate_distance(last_node.lat, last_node.lng, candidate.lat, candidate.lng)
                     
                     if dist_to_candidate < best_extra_distance:
                         best_extra_distance = dist_to_candidate
