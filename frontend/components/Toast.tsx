@@ -16,20 +16,23 @@ const Toast: React.FC<ToastProps> = ({message, type, onClose, duration = 5000}) 
   }, [onClose, duration]);
 
   const bgColor = {
-    success: 'bg-green-50 border-green-200 text-green-800',
-    error: 'bg-red-50 border-red-200 text-red-800',
-    info: 'bg-blue-50 border-blue-200 text-blue-800',
+    success: 'bg-emerald-50 border-emerald-200 text-emerald-900',
+    error: 'bg-rose-50 border-rose-200 text-rose-900',
+    info: 'bg-stone-50 border-stone-200 text-stone-900',
   }[type];
 
   const icon = {
     success: '✓',
-    error: '⚠️',
-    info: 'ℹ️',
+    error: '!',
+    info: 'i',
   }[type];
 
   return (
-    <div className={`fixed top-4 right-4 max-w-sm border rounded-lg p-4 shadow-lg ${bgColor}`}>
-      {icon} {message}
+    <div className={`fixed right-5 top-5 z-50 flex max-w-sm items-center gap-3 rounded-md border p-4 text-sm shadow-lg ${bgColor}`}>
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-current text-xs font-semibold">
+        {icon}
+      </span>
+      <span>{message}</span>
     </div>
   );
 };

@@ -25,8 +25,9 @@ def assign_routes_to_fleet(clusters: List[RouteCluster], fleet: List[Truck], max
         
         for truck in fleet:
             remaining_distance = truck.max_daily_distance - truck.distance_used
+            remaining_capacity = truck.max_weight_capacity
             
-            if cluster.total_route_distance <= remaining_distance:
+            if cluster.total_weight <= remaining_capacity and cluster.total_route_distance <= remaining_distance:
                 assignments[truck.id].append(cluster)
                 truck.distance_used += cluster.total_route_distance
                 
