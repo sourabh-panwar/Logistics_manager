@@ -64,7 +64,7 @@ export default function ActiveDeliveriesPage() {
               <h1 className="mt-3 text-3xl font-semibold text-white">Active deliveries</h1>
               <p className="mt-2 text-sm text-stone-500">Monitor truck assignments that are still open.</p>
             </div>
-            <Link href="/dispatch" className="rounded-md bg-dark-card px-5 py-3 text-sm font-semibold text-black transition hover:bg-stone-800">
+            <Link href="/dispatch" className="rounded-md bg-dark-card px-5 py-3 text-white font-semibold text-black transition hover:bg-stone-800">
               New dispatch
             </Link>
           </div>
@@ -103,7 +103,7 @@ export default function ActiveDeliveriesPage() {
               <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-stone-500">
                 Create and activate a dispatch to see truck-level routes in this view.
               </p>
-              <Link href="/dispatch" className="mt-6 inline-flex rounded-md bg-dark-card px-5 py-3 text-sm font-semibold text-black transition hover:bg-stone-800">
+              <Link href="/dispatch" className="mt-6 inline-flex rounded-md bg-dark-card px-5 py-3 text-white font-semibold text-black transition hover:bg-stone-800">
                 Create dispatch
               </Link>
             </div>

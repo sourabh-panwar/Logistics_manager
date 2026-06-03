@@ -1,10 +1,13 @@
-# Python Virtual Environment
-venv/
-
-# Python Backend
+.DS_Store
+Thumbs.db
+backend/.venv/
 backend/__pycache__/
 backend/logistics.db
-
-# Next.js Frontend
+*.pyc
+*.pyo
+*.pyd
 frontend/.next/
 frontend/node_modules/
+.env
+.env.local
+.env.*.local
