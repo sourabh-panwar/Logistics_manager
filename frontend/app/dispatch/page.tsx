@@ -335,7 +335,7 @@ export default function DispatchPage() {
                     <button
                       onClick={() => dispatch({type: 'SET_STEP', payload: 'deliveries'})}
                       disabled={!state.warehouse}
-                      className="rounded-md bg-dark-card px-5 py-3 text-sm font-semibold text-black transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+                      className="rounded-md bg-dark-card px-5 py-3 text-white font-semibold text-black transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
                     >
                       Continue
                     </button>
@@ -381,7 +381,7 @@ export default function DispatchPage() {
                     <button
                       onClick={addDelivery}
                       disabled={!state.tempDeliveryCoord || !state.tempDeliveryWeight}
-                      className="mt-4 w-full rounded-md bg-dark-card px-4 py-3 text-sm font-semibold text-black transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+                      className="mt-4 w-full rounded-md bg-dark-card px-4 py-3 text-white font-semibold text-black transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
                     >
                       Add delivery
                     </button>
@@ -415,7 +415,7 @@ export default function DispatchPage() {
                     <button
                       onClick={() => dispatch({type: 'SET_STEP', payload: 'trucks'})}
                       disabled={state.deliveries.length === 0}
-                      className="ml-auto rounded-md bg-dark-card px-5 py-3 text-sm font-semibold text-black transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+                      className="ml-auto rounded-md bg-dark-card px-5 py-3 text-white font-semibold text-black transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
                     >
                       Continue
                     </button>
@@ -464,7 +464,7 @@ export default function DispatchPage() {
                         className={inputClass}
                       />
                     </div>
-                    <button onClick={addTruck} className="w-full rounded-md bg-dark-card px-4 py-3 text-sm font-semibold text-black transition hover:bg-stone-800">
+                    <button onClick={addTruck} className="w-full rounded-md bg-dark-card px-4 py-3 text-white font-semibold text-black transition hover:bg-stone-800">
                       Add truck
                     </button>
                   </div>
@@ -501,7 +501,7 @@ export default function DispatchPage() {
                     <button
                       onClick={() => dispatch({type: 'SET_STEP', payload: 'calculate'})}
                       disabled={state.trucks.length === 0}
-                      className="ml-auto rounded-md bg-dark-card px-5 py-3 text-sm font-semibold text-black transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
+                      className="ml-auto rounded-md bg-dark-card px-5 py-3 text-white font-semibold text-black transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:bg-stone-300"
                     >
                       Review plan
                     </button>
